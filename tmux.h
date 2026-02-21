@@ -1984,6 +1984,7 @@ struct client {
 	u_int			 term_ncaps;
 
 	char			*ttyname;
+	char			*tty_token;
 	struct tty		 tty;
 
 	size_t			 written;
@@ -2965,6 +2966,10 @@ void	 server_update_socket(void);
 void	 server_add_accept(int);
 void printflike(1, 2) server_add_message(const char *, ...);
 int	 server_create_socket(uint64_t, char **);
+#ifdef _WIN32
+void	 server_add_pending_tty(const char *, int);
+int	 server_get_pending_tty(const char *);
+#endif
 
 /* server-client.c */
 RB_PROTOTYPE(client_windows, client_window, entry, server_client_window_cmp);

@@ -191,6 +191,9 @@ tty_read_callback(__unused int fd, __unused short events, void *data)
 	size_t		 size = EVBUFFER_LENGTH(tty->in);
 	int		 nread;
 
+	if (c->flags & CLIENT_DEAD)
+		return;
+
 	nread = evbuffer_read(tty->in, c->fd, -1);
 	if (nread == 0 || nread == -1) {
 		if (nread == 0)
@@ -589,16 +592,38 @@ tty_raw(struct tty *tty, const char *s)
 	ssize_t		 n, slen;
 	u_int		 i;
 
+	if (c->fd == -1)
+		return;
+
 	slen = strlen(s);
 	for (i = 0; i < 5; i++) {
+#ifdef _WIN32
+		/*
+		 * On Windows, c->fd is a Winsock socket (the tty channel).
+		 * Must use send() instead of write() which maps to _write()
+		 * and would invoke the CRT invalid parameter handler on a
+		 * non-CRT fd, calling abort().
+		 */
+		n = send((SOCKET)c->fd, s, slen, 0);
+		if (n == SOCKET_ERROR) {
+			if (WSAGetLastError() == WSAEWOULDBLOCK)
+				;  /* retry */
+			else
+				break;
+		} else {
+#else
 		n = write(c->fd, s, slen);
 		if (n >= 0) {
+#endif
 			s += n;
 			slen -= n;
 			if (slen == 0)
 				break;
-		} else if (n == -1 && errno != EAGAIN)
+		}
+#ifndef _WIN32
+		else if (n == -1 && errno != EAGAIN)
 			break;
+#endif
 		usleep(100);
 	}
 }

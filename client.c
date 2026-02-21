@@ -42,6 +42,12 @@ static struct tmuxproc	*client_proc;
 static struct tmuxpeer	*client_peer;
 static uint64_t		 client_flags;
 static int		 client_suspended;
+#ifdef _WIN32
+static int		 client_tty_fd = -1;
+static struct event	 client_tty_event;
+static HANDLE		 client_stdin_thread_h = NULL;
+static volatile int	 client_tty_running = 0;
+#endif
 static enum {
 	CLIENT_EXIT_NONE,
 	CLIENT_EXIT_DETACHED,
@@ -74,6 +80,10 @@ static void		 client_dispatch(struct imsg *, void *);
 static void		 client_dispatch_attached(struct imsg *);
 static void		 client_dispatch_wait(struct imsg *);
 static const char	*client_exit_message(void);
+#ifdef _WIN32
+static void		 client_start_tty_relay(void);
+static void		 client_stop_tty_relay(void);
+#endif
 
 /*
  * Get server create lock. If already held then server start is happening in
@@ -461,6 +471,11 @@ client_main(struct event_base *base, int argc, char **argv, uint64_t flags,
 	/* Start main loop. */
 	proc_loop(client_proc, NULL);
 
+#ifdef _WIN32
+	/* Stop tty relay and restore console. */
+	client_stop_tty_relay();
+#endif
+
 	/* Run command if user requested exec, instead of exiting. */
 	if (client_exittype == MSG_EXEC) {
 		if (client_flags & CLIENT_CONTROLCONTROL)
@@ -540,9 +555,24 @@ client_send_identify(const char *ttynam, const char *termname, char **caps,
 	}
 
 #ifdef _WIN32
-	/* On Windows, we don't pass FDs. Send -1 and use the proxy model. */
+	/* On Windows, we can't pass FDs over the socket. Instead, open a
+	 * separate TCP connection for tty I/O and send a correlation token. */
 	proc_send(client_peer, MSG_IDENTIFY_STDIN, -1, NULL, 0);
 	proc_send(client_peer, MSG_IDENTIFY_STDOUT, -1, NULL, 0);
+	{
+		char tty_token[65];
+
+		win32_generate_tty_token(tty_token, sizeof tty_token);
+		if (tty_token[0] != '\0') {
+			client_tty_fd = win32_ipc_connect_tty(
+			    socket_path, tty_token);
+			if (client_tty_fd != -1) {
+				proc_send(client_peer,
+				    MSG_IDENTIFY_TTYTOKEN, -1,
+				    tty_token, strlen(tty_token) + 1);
+			}
+		}
+	}
 #else
 	if ((fd = dup(STDIN_FILENO)) == -1)
 		fatal("dup failed");
@@ -596,6 +626,103 @@ client_exec(const char *shell, const char *shellcmd)
 	fatal("execl failed");
 #endif
 }
+
+#ifdef _WIN32
+/*
+ * Tty relay: read from tty socket, write to console stdout.
+ * This is the libevent callback fired when the server sends tty output.
+ */
+static void
+client_tty_read_cb(int fd, __unused short events, __unused void *arg)
+{
+	char	buf[8192];
+	int	n;
+	DWORD	written;
+
+	n = recv((SOCKET)fd, buf, sizeof buf, 0);
+	if (n <= 0) {
+		event_del(&client_tty_event);
+		return;
+	}
+	WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), buf, n, &written, NULL);
+}
+
+/*
+ * Tty relay: read from console stdin, write to tty socket.
+ * Runs in a separate thread since ReadFile on console blocks.
+ */
+static DWORD WINAPI
+client_stdin_thread_func(LPVOID arg)
+{
+	int	fd = (int)(intptr_t)arg;
+	HANDLE	h = GetStdHandle(STD_INPUT_HANDLE);
+	char	buf[8192];
+	DWORD	nread;
+
+	while (client_tty_running) {
+		if (!ReadFile(h, buf, sizeof buf, &nread, NULL) || nread == 0)
+			break;
+		if (send((SOCKET)fd, buf, (int)nread, 0) <= 0)
+			break;
+	}
+	return (0);
+}
+
+/*
+ * Start the tty relay after the client becomes attached.
+ */
+static void
+client_start_tty_relay(void)
+{
+	if (client_tty_fd == -1)
+		return;
+
+	/* Set console to raw VT mode. */
+	win32_tty_raw_mode();
+
+	/* Set tty socket to non-blocking for libevent. */
+	setblocking(client_tty_fd, 0);
+
+	/* Register tty socket for reading. */
+	event_set(&client_tty_event, client_tty_fd,
+	    EV_READ|EV_PERSIST, client_tty_read_cb, NULL);
+	event_add(&client_tty_event, NULL);
+
+	/* Start stdin reader thread. */
+	client_tty_running = 1;
+	client_stdin_thread_h = CreateThread(NULL, 0,
+	    client_stdin_thread_func, (LPVOID)(intptr_t)client_tty_fd,
+	    0, NULL);
+}
+
+/*
+ * Stop the tty relay on detach/exit.
+ */
+static void
+client_stop_tty_relay(void)
+{
+	client_tty_running = 0;
+
+	if (event_initialized(&client_tty_event))
+		event_del(&client_tty_event);
+
+	/* Cancel blocking ReadFile. */
+	if (client_stdin_thread_h != NULL) {
+		CancelIoEx(GetStdHandle(STD_INPUT_HANDLE), NULL);
+		WaitForSingleObject(client_stdin_thread_h, 1000);
+		CloseHandle(client_stdin_thread_h);
+		client_stdin_thread_h = NULL;
+	}
+
+	if (client_tty_fd != -1) {
+		closesocket((SOCKET)client_tty_fd);
+		client_tty_fd = -1;
+	}
+
+	/* Restore console mode. */
+	win32_tty_restore();
+}
+#endif
 
 /* Callback to handle signals in the client. */
 static void
@@ -749,6 +876,9 @@ client_dispatch_wait(struct imsg *imsg)
 			fatalx("bad MSG_READY size");
 
 		client_attached = 1;
+#ifdef _WIN32
+		client_start_tty_relay();
+#endif
 		proc_send(client_peer, MSG_RESIZE, -1, NULL, 0);
 		break;
 	case MSG_VERSION:

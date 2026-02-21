@@ -488,6 +488,7 @@ server_client_lost(struct client *c)
 	if (c->flags & CLIENT_TERMINAL)
 		tty_free(&c->tty);
 	free(c->ttyname);
+	free(c->tty_token);
 	free(c->clipboard_panes);
 
 	free(c->term_name);
@@ -523,11 +524,13 @@ server_client_lost(struct client *c)
 		close(c->out_fd);
 #ifdef _WIN32
 	/*
-	 * On Windows, c->fd is the peer's Winsock socket (set in
-	 * server_client_dispatch_identify). It was already closed by
-	 * proc_remove_peer() above, so just clear it.
+	 * On Windows, c->fd is a separate tty channel socket.
+	 * Close it with closesocket since it's a Winsock socket.
 	 */
-	c->fd = -1;
+	if (c->fd != -1) {
+		closesocket((SOCKET)c->fd);
+		c->fd = -1;
+	}
 #else
 	if (c->fd != -1) {
 		close(c->fd);
@@ -3426,6 +3429,7 @@ server_client_dispatch(struct imsg *imsg, void *arg)
 	case MSG_IDENTIFY_TERM:
 	case MSG_IDENTIFY_TERMINFO:
 	case MSG_IDENTIFY_TTYNAME:
+	case MSG_IDENTIFY_TTYTOKEN:
 	case MSG_IDENTIFY_DONE:
 		if (server_client_dispatch_identify(c, imsg) != 0)
 			goto bad;
@@ -3737,6 +3741,25 @@ server_client_dispatch_identify(struct client *c, struct imsg *imsg)
 		memcpy(&c->pid, data, sizeof c->pid);
 		log_debug("client %p IDENTIFY_CLIENTPID %ld", c, (long)c->pid);
 		break;
+	case MSG_IDENTIFY_TTYTOKEN:
+#ifdef _WIN32
+		if (datalen == 0 || data[datalen - 1] != '\0')
+			return (-1);
+		c->tty_token = xstrdup(data);
+		log_debug("client %p IDENTIFY_TTYTOKEN %s", c, data);
+		/* Try to find a matching pending tty connection. */
+		{
+			int tty_fd = server_get_pending_tty(data);
+			if (tty_fd != -1) {
+				c->fd = tty_fd;
+				free(c->tty_token);
+				c->tty_token = NULL;
+				log_debug("client %p matched tty fd %d",
+				    c, tty_fd);
+			}
+		}
+#endif
+		break;
 	default:
 		break;
 	}
@@ -3764,12 +3787,20 @@ server_client_dispatch_identify(struct client *c, struct imsg *imsg)
 
 #ifdef _WIN32
 	/*
-	 * On Windows, we can't pass FDs. Use the peer's imsg socket
-	 * as the client fd for tty I/O via the data proxy model.
+	 * On Windows, tty I/O uses a separate TCP connection (tty channel).
+	 * If we haven't matched it yet, do a final check of the pending list.
 	 */
-	if (c->fd == -1 && !(c->flags & CLIENT_CONTROL)) {
-		c->fd = proc_peer_fd(c->peer);
-		log_debug("client %p using peer fd %d for tty", c, c->fd);
+	if (c->fd == -1 && c->tty_token != NULL) {
+		int tty_fd = server_get_pending_tty(c->tty_token);
+		if (tty_fd != -1) {
+			c->fd = tty_fd;
+			log_debug("client %p late-matched tty fd %d",
+			    c, tty_fd);
+		} else {
+			log_debug("client %p no tty channel found", c);
+		}
+		free(c->tty_token);
+		c->tty_token = NULL;
 	}
 #endif
 
@@ -3777,7 +3808,9 @@ server_client_dispatch_identify(struct client *c, struct imsg *imsg)
 		control_start(c);
 	else if (c->fd != -1) {
 		if (tty_init(&c->tty, c) != 0) {
-#ifndef _WIN32
+#ifdef _WIN32
+			closesocket((SOCKET)c->fd);
+#else
 			close(c->fd);
 #endif
 			c->fd = -1;

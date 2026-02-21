@@ -56,6 +56,52 @@ static int		 server_exit;
 static struct event	 server_ev_accept;
 static struct event	 server_ev_tidy;
 
+#ifdef _WIN32
+/*
+ * Pending tty channel connections waiting to be matched with a client.
+ * When a TTY channel connection arrives in server_accept(), we store it
+ * here until the client sends MSG_IDENTIFY_TTYTOKEN to claim it.
+ */
+struct pending_tty {
+	char			 token[65];
+	int			 fd;
+	TAILQ_ENTRY(pending_tty) entry;
+};
+static TAILQ_HEAD(, pending_tty) pending_ttys =
+    TAILQ_HEAD_INITIALIZER(pending_ttys);
+
+void
+server_add_pending_tty(const char *token, int fd)
+{
+	struct pending_tty	*pt;
+
+	pt = xcalloc(1, sizeof *pt);
+	strlcpy(pt->token, token, sizeof pt->token);
+	pt->fd = fd;
+	TAILQ_INSERT_TAIL(&pending_ttys, pt, entry);
+	log_debug("added pending tty: token=%s fd=%d", token, fd);
+}
+
+int
+server_get_pending_tty(const char *token)
+{
+	struct pending_tty	*pt, *pt_next;
+	int			 fd;
+
+	TAILQ_FOREACH_SAFE(pt, &pending_ttys, entry, pt_next) {
+		if (strcmp(pt->token, token) == 0) {
+			fd = pt->fd;
+			TAILQ_REMOVE(&pending_ttys, pt, entry);
+			free(pt);
+			log_debug("matched pending tty: token=%s fd=%d",
+			    token, fd);
+			return (fd);
+		}
+	}
+	return (-1);
+}
+#endif
+
 struct cmd_find_state	 marked_pane;
 
 static u_int		 message_next;
@@ -334,6 +380,11 @@ server_loop(void)
 	if (job_still_running())
 		return (0);
 
+	log_debug("server_loop: exiting (exit-empty=%lld exit-unatt=%lld "
+	    "sessions=%d server_exit=%d)",
+	    (long long)options_get_number(global_options, "exit-empty"),
+	    (long long)options_get_number(global_options, "exit-unattached"),
+	    !RB_EMPTY(&sessions), server_exit);
 	return (1);
 }
 
@@ -427,13 +478,42 @@ server_accept(int fd, short events, __unused void *data)
 
 #ifdef _WIN32
 	/*
-	 * On Windows, the client sends an auth token line before starting
-	 * the imsg protocol. Read and verify it before handing the socket
-	 * to imsg, otherwise the token bytes corrupt the message stream.
+	 * On Windows, the client sends an auth line before the imsg
+	 * protocol. This can be either:
+	 *   "<auth_token>\n" - regular imsg connection
+	 *   "TTY:<token>:<auth_token>\n" - tty data channel
 	 */
-	if (win32_ipc_verify_auth_token(newfd, socket_path) != 0) {
-		closesocket((SOCKET)newfd);
-		return;
+	{
+		char tty_token[65] = {0};
+		int auth_result;
+
+		auth_result = win32_ipc_verify_auth(newfd, socket_path,
+		    tty_token, sizeof tty_token);
+		if (auth_result == -1) {
+			closesocket((SOCKET)newfd);
+			return;
+		}
+		if (auth_result == 1) {
+			/*
+			 * TTY channel. Try to find a client already
+			 * waiting for this token; otherwise queue it.
+			 */
+			struct client *tc;
+			TAILQ_FOREACH(tc, &clients, entry) {
+				if (tc->tty_token != NULL &&
+				    strcmp(tc->tty_token, tty_token) == 0) {
+					tc->fd = newfd;
+					log_debug("matched tty fd %d for "
+					    "client %p", newfd, tc);
+					free(tc->tty_token);
+					tc->tty_token = NULL;
+					server_add_accept(0);
+					return;
+				}
+			}
+			server_add_pending_tty(tty_token, newfd);
+			return;
+		}
 	}
 #endif
 
