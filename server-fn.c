@@ -331,6 +331,13 @@ server_destroy_pane(struct window_pane *wp, int notify)
 #endif
 		bufferevent_free(wp->event);
 		wp->event = NULL;
+#ifdef _WIN32
+		if (wp->win32_pty != NULL) {
+			win32_pty_close((struct win32_pty *)wp->win32_pty);
+			wp->win32_pty = NULL;
+			wp->fd = -1;
+		} else
+#endif
 		close(wp->fd);
 		wp->fd = -1;
 	}
