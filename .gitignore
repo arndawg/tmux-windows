@@ -50,7 +50,6 @@ defines_output.txt
 tmux-out-*.log
 client-new.log
 build_*.bat
-osdep-windows.c
 
 # WinFlexBison
 winflex/
