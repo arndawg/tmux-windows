@@ -104,7 +104,12 @@ checkshell(const char *shell)
 {
 	if (shell == NULL || *shell == '\0')
 		return (0);
-#ifndef _WIN32
+#ifdef _WIN32
+	if (*shell == '/') {
+		log_debug("ignoring Unix shell path \"%s\" on Windows", shell);
+		return (0);
+	}
+#else
 	if (*shell != '/')
 		return (0);
 #endif
@@ -503,6 +508,12 @@ main(int argc, char **argv)
 			}
 			cfg_files = xreallocarray(cfg_files, cfg_nfiles + 1,
 			    sizeof *cfg_files);
+
+#ifdef _WIN32
+			if (strcmp(optarg, "/dev/null") == 0)
+				cfg_files[cfg_nfiles++] = xstrdup("NUL");
+			else
+#endif
 			cfg_files[cfg_nfiles++] = xstrdup(optarg);
 			cfg_quiet = 0;
 			break;
@@ -525,6 +536,24 @@ main(int argc, char **argv)
 			break;
 		case 'S':
 			free(path);
+#ifdef _WIN32
+			/*
+			 * On Windows, -S is an IPC label, not a file path.
+			 * Strip any directory prefix (Unix paths are
+			 * meaningless here) so -S /tmp/foo becomes "foo".
+			 */
+			if (strchr(optarg, '/') != NULL) {
+				const char *base;
+				fprintf(stderr, "warning: -S \"%s\" is a "
+				    "Unix-style path; on Windows the "
+				    "basename is used as an IPC label\n",
+				    optarg);
+				base = strrchr(optarg, '/') + 1;
+				if (*base == '\0')
+					base = "default";
+				path = xstrdup(base);
+			} else
+#endif
 			path = xstrdup(optarg);
 			break;
 		case 'T':
