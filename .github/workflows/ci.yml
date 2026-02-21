@@ -1,0 +1,148 @@
+name: Windows CI
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  pull_request:
+    branches: [master]
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    env:
+      VCPKG_DEFAULT_TRIPLET: x64-windows
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup vcpkg and install dependencies
+        shell: pwsh
+        run: |
+          vcpkg install libevent:x64-windows
+
+      - name: Configure CMake
+        shell: pwsh
+        run: |
+          cmake -S . -B build -G "Visual Studio 17 2022" `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+
+      - name: Build Debug
+        shell: pwsh
+        run: |
+          cmake --build build --config Debug
+
+      - name: Build Release
+        shell: pwsh
+        run: |
+          cmake --build build --config Release
+
+      - name: Run basic regression tests
+        shell: bash
+        run: |
+          TEST_TMUX=./build/Debug/tmux.exe bash regress/win32-basic.sh
+
+      - name: Run Claude swarm simulation tests
+        shell: bash
+        run: |
+          TEST_TMUX=./build/Debug/tmux.exe bash regress/win32-claude-swarm.sh
+
+      - name: Upload build artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tmux-windows-debug
+          path: |
+            build/Debug/tmux.exe
+            build/Debug/*.dll
+
+  release:
+    needs: build-and-test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    env:
+      VCPKG_DEFAULT_TRIPLET: x64-windows
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup vcpkg and install dependencies
+        shell: pwsh
+        run: |
+          vcpkg install libevent:x64-windows
+
+      - name: Configure CMake
+        shell: pwsh
+        run: |
+          cmake -S . -B build -G "Visual Studio 17 2022" `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+
+      - name: Build Release
+        shell: pwsh
+        run: |
+          cmake --build build --config Release
+
+      - name: Package release
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}"
+          $zipName = "tmux-windows-$version.zip"
+          $stagingDir = "release-staging"
+
+          New-Item -ItemType Directory -Path $stagingDir
+          Copy-Item build/Release/tmux.exe $stagingDir/
+          Copy-Item build/Release/*.dll $stagingDir/ -ErrorAction SilentlyContinue
+
+          # Create install instructions
+          @"
+          tmux-windows $version
+
+          Installation:
+            1. Extract this zip to a folder (e.g., C:\tools\tmux)
+            2. Add that folder to your PATH
+            3. Run: tmux new-session
+
+          Requirements:
+            - Windows 10 version 1809+ (for ConPTY support)
+            - Windows Terminal or a VT-capable console host
+
+          More info: https://github.com/arndawg/tmux-windows
+          "@ | Out-File -Encoding UTF8 $stagingDir/README.txt
+
+          Compress-Archive -Path "$stagingDir/*" -DestinationPath $zipName
+
+          # Generate SHA256
+          $hash = (Get-FileHash $zipName -Algorithm SHA256).Hash
+          "$hash  $zipName" | Out-File -Encoding UTF8 "$zipName.sha256"
+
+          echo "ZIP_NAME=$zipName" >> $env:GITHUB_ENV
+          echo "ZIP_HASH=$hash" >> $env:GITHUB_ENV
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ env.ZIP_NAME }}
+            ${{ env.ZIP_NAME }}.sha256
+          body: |
+            ## tmux for Windows ${{ github.ref_name }}
+
+            **SHA256:** `${{ env.ZIP_HASH }}`
+
+            ### Installation
+            1. Download `${{ env.ZIP_NAME }}`
+            2. Extract to a folder in your `%PATH%`
+            3. Run `tmux new-session`
+
+            ### Requirements
+            - Windows 10 version 1809+
+            - Windows Terminal or VT-capable console
+
+            ### What's included
+            - `tmux.exe` (Release build)
+            - libevent runtime DLL
+
+            See [README_WIN32.MD](https://github.com/arndawg/tmux-windows/blob/master/README_WIN32.MD) for full documentation.
+          generate_release_notes: true

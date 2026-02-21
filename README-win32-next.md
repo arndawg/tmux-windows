@@ -81,15 +81,11 @@ The docs mention control mode as the "suggested entrypoint" via iTerm2. Verify
 it works on Windows, or document if it doesn't. Claude Code may use this path
 on some platforms.
 
-#### 7. Test the Specific Claude Code Command Sequences
+#### 7. ~~Test the Specific Claude Code Command Sequences~~ DONE
 
-Write a test that exercises exactly what Claude Code does: `new-session`,
-`split-window`, `send-keys`, `capture-pane`, `list-panes`, `kill-session` in
-rapid succession. The existing tests cover most of these individually but not
-the rapid-fire sequencing an agent swarm would do.
-
-See [Detailed Plan for #7](#detailed-plan-for-7-claude-code-command-sequence-test)
-below.
+Completed in `regress/win32-claude-swarm.sh`. 10-test suite covers rapid
+multi-split, pane targeting, capture round-trips, concurrent sessions, and
+teardown under load. All tests pass across 3 cycles.
 
 ### Medium Priority
 
