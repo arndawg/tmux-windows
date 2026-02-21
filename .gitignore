@@ -22,3 +22,34 @@ fuzz/*-fuzzer
 tags
 tmux
 tmux.1.*
+
+# Windows build output
+build/
+build2/
+*.exe
+*.obj
+*.pdb
+*.dll
+*.lib
+*.exp
+*.ilk
+.vs/
+*.vcxproj.user
+CMakeSettings.json
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+
+# Windows test/debug artifacts
+test_*.c
+child_console_info.txt
+conpty_results.txt
+defines_output.txt
+tmux-out-*.log
+client-new.log
+build_*.bat
+osdep-windows.c
+
+# WinFlexBison
+winflex/
+winflex.zip
