@@ -896,6 +896,7 @@ int  win32_ipc_create_server(const char *label, uint16_t *port);
 int  win32_ipc_connect(const char *label);
 void win32_ipc_create_auth_token(const char *path);
 int  win32_ipc_verify_auth_token(int fd, const char *path);
+void win32_ipc_cleanup(const char *label);
 
 /* win32-signal.c */
 void win32_signal_init(void);

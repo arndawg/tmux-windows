@@ -255,11 +255,17 @@ win32_ipc_connect(const char *label)
 		return (-1);
 	}
 
-	/* Send auth token. */
+	/* Send auth token + newline as a single send to avoid TCP split. */
 	auth_token = read_auth_token(label);
 	if (auth_token != NULL) {
-		send(s, auth_token, (int)strlen(auth_token), 0);
-		send(s, "\n", 1, 0);
+		size_t tlen = strlen(auth_token);
+		char *line = malloc(tlen + 2);
+		if (line != NULL) {
+			memcpy(line, auth_token, tlen);
+			line[tlen] = '\n';
+			send(s, line, (int)(tlen + 1), 0);
+			free(line);
+		}
 		free(auth_token);
 	}
 
@@ -281,16 +287,35 @@ win32_ipc_verify_auth_token(int fd, const char *label)
 	if (expected == NULL)
 		return (0); /* No auth token file, allow anyway. */
 
-	n = recv((SOCKET)fd, buf, sizeof buf - 1, 0);
-	if (n <= 0) {
-		free(expected);
-		return (-1);
+	/*
+	 * The accepted socket may be non-blocking (inherited from the
+	 * listening socket on Winsock). Set it to blocking temporarily
+	 * so the auth recv completes reliably.
+	 */
+	{
+		u_long zero = 0;
+		ioctlsocket((SOCKET)fd, FIONBIO, &zero);
 	}
-	buf[n] = '\0';
 
-	/* Strip trailing newline. */
-	if (n > 0 && buf[n - 1] == '\n')
-		buf[n - 1] = '\0';
+	/*
+	 * Read auth token one byte at a time until newline.
+	 * This ensures we consume exactly the auth line and don't
+	 * leave stray bytes in the socket buffer for the imsg layer.
+	 */
+	{
+		int i;
+		char ch;
+
+		for (i = 0; i < (int)(sizeof buf - 1); i++) {
+			n = recv((SOCKET)fd, &ch, 1, 0);
+			if (n != 1)
+				break;
+			if (ch == '\n')
+				break;
+			buf[i] = ch;
+		}
+		buf[i] = '\0';
+	}
 
 	if (strcmp(buf, expected) != 0) {
 		free(expected);

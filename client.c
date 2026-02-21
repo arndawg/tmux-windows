@@ -139,6 +139,9 @@ client_connect(struct event_base *base, const char *path, uint64_t flags)
 		return (fd);
 	}
 
+	/* Remove stale IPC files so retries don't hit old port. */
+	win32_ipc_cleanup(path);
+
 	/* Launch a detached server process and poll-retry connection. */
 	win32_launch_server(path);
 	for (retries = 0; retries < 50; retries++) {
