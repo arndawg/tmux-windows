@@ -593,6 +593,23 @@ client_send_identify(const char *ttynam, const char *termname, char **caps,
 	}
 
 	proc_send(client_peer, MSG_IDENTIFY_DONE, -1, NULL, 0);
+
+#ifdef _WIN32
+	/*
+	 * Send initial window size from the client's console. The server
+	 * is a detached process with no console, so it cannot detect the
+	 * client's terminal dimensions on its own.
+	 */
+	{
+		struct msg_resize_data	rd;
+		int			cols = 80, rows = 24;
+
+		win32_tty_get_size(&cols, &rows);
+		rd.sx = cols;
+		rd.sy = rows;
+		proc_send(client_peer, MSG_RESIZE, -1, &rd, sizeof rd);
+	}
+#endif
 }
 
 /* Run command in shell; used for -c. */
@@ -766,7 +783,20 @@ client_signal(int sig)
 			proc_send(client_peer, MSG_EXITING, -1, NULL, 0);
 			break;
 		case SIGWINCH:
+#ifdef _WIN32
+			{
+				struct msg_resize_data	rd;
+				int			cols = 80, rows = 24;
+
+				win32_tty_get_size(&cols, &rows);
+				rd.sx = cols;
+				rd.sy = rows;
+				proc_send(client_peer, MSG_RESIZE, -1,
+				    &rd, sizeof rd);
+			}
+#else
 			proc_send(client_peer, MSG_RESIZE, -1, NULL, 0);
+#endif
 			break;
 #ifndef _WIN32
 		case SIGCONT:

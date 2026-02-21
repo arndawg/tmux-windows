@@ -82,6 +82,11 @@ enum msgtype {
  *
  * Don't forget to bump PROTOCOL_VERSION if any of these change!
  */
+struct msg_resize_data {
+	u_int	sx;
+	u_int	sy;
+};
+
 struct msg_command {
 	int	argc;
 }; /* followed by packed argv */

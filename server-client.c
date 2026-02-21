@@ -3439,13 +3439,33 @@ server_client_dispatch(struct imsg *imsg, void *arg)
 			goto bad;
 		break;
 	case MSG_RESIZE:
-		if (datalen != 0)
+		if (datalen != 0 &&
+		    datalen != sizeof(struct msg_resize_data))
 			goto bad;
 
 		if (c->flags & CLIENT_CONTROL)
 			break;
 		server_client_update_latest(c);
-		tty_resize(&c->tty);
+		if (datalen == sizeof(struct msg_resize_data)) {
+			/*
+			 * Client sent its terminal dimensions (Windows).
+			 * Apply them directly instead of querying the
+			 * server's (non-existent) console.
+			 */
+			struct msg_resize_data	*rd = imsg->data;
+			u_int			 sx = rd->sx, sy = rd->sy;
+
+			if (sx == 0)
+				sx = 80;
+			if (sy == 0)
+				sy = 24;
+			log_debug("client %p resize from msg: %ux%u",
+			    c, sx, sy);
+			tty_set_size(&c->tty, sx, sy, 0, 0);
+			tty_invalidate(&c->tty);
+		} else {
+			tty_resize(&c->tty);
+		}
 		tty_repeat_requests(&c->tty, 0);
 		recalculate_sizes();
 		if (c->overlay_resize == NULL)

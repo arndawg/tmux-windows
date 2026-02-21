@@ -124,23 +124,20 @@ tty_init(struct tty *tty, struct client *c)
 void
 tty_resize(struct tty *tty)
 {
+#ifdef _WIN32
+	/*
+	 * On Windows, the server is a detached process with no console.
+	 * It cannot query the client's terminal size via GetStdHandle().
+	 * The client sends its dimensions via MSG_RESIZE, which are applied
+	 * directly via tty_set_size() in the MSG_RESIZE handler.
+	 */
+	return;
+#else
 	struct client	*c = tty->client;
 	struct winsize	 ws;
 	u_int		 sx, sy, xpixel, ypixel;
 
-#ifdef _WIN32
-	{
-		int cols = 80, rows = 24;
-		win32_tty_get_size(&cols, &rows);
-		ws.ws_col = cols;
-		ws.ws_row = rows;
-		ws.ws_xpixel = 0;
-		ws.ws_ypixel = 0;
-	}
-	if (1) {
-#else
 	if (ioctl(c->fd, TIOCGWINSZ, &ws) != -1) {
-#endif
 		sx = ws.ws_col;
 		if (sx == 0) {
 			sx = 80;
@@ -171,6 +168,7 @@ tty_resize(struct tty *tty)
 	    xpixel, ypixel);
 	tty_set_size(tty, sx, sy, xpixel, ypixel);
 	tty_invalidate(tty);
+#endif
 }
 
 void
