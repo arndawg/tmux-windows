@@ -16,10 +16,12 @@
 
 #include <sys/types.h>
 
+#ifndef _WIN32
 #include <glob.h>
 #include <unistd.h>
 #if defined(HAVE_LIBPROC_H)
 #include <libproc.h>
+#endif
 #endif
 
 #include "compat.h"

@@ -17,19 +17,29 @@
  */
 
 #include <sys/types.h>
+#ifndef _WIN32
 #include <sys/ioctl.h>
+#endif
 
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
+#ifndef _WIN32
 #include <fnmatch.h>
+#endif
+#ifndef _WIN32
 #include <regex.h>
+#endif
+#ifndef _WIN32
 #include <signal.h>
+#endif
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 #include "tmux.h"
 
@@ -377,8 +387,12 @@ window_pane_destroy_ready(struct window_pane *wp)
 	if (wp->pipe_fd != -1) {
 		if (EVBUFFER_LENGTH(wp->pipe_event->output) != 0)
 			return (0);
+#ifdef _WIN32
+		/* On Windows, skip FIONREAD ioctl (not applicable to sockets here). */
+#else
 		if (ioctl(wp->fd, FIONREAD, &n) != -1 && n > 0)
 			return (0);
+#endif
 	}
 
 	if (~wp->flags & PANE_EXITED)
@@ -441,6 +455,11 @@ window_pane_send_resize(struct window_pane *wp, u_int sx, u_int sy)
 
 	log_debug("%s: %%%u resize to %u,%u", __func__, wp->id, sx, sy);
 
+#ifdef _WIN32
+	if (wp->win32_pty != NULL)
+		win32_pty_resize((struct win32_pty *)wp->win32_pty,
+		    (int)sx, (int)sy);
+#else
 	memset(&ws, 0, sizeof ws);
 	ws.ws_col = sx;
 	ws.ws_row = sy;
@@ -457,6 +476,7 @@ window_pane_send_resize(struct window_pane *wp, u_int sx, u_int sy)
 		if (errno != EINVAL && errno != ENXIO)
 #endif
 		fatal("ioctl failed");
+#endif
 }
 
 int
@@ -988,6 +1008,13 @@ window_pane_destroy(struct window_pane *wp)
 		kill(getpid(), SIGCHLD);
 #endif
 		bufferevent_free(wp->event);
+#ifdef _WIN32
+		if (wp->win32_pty != NULL) {
+			win32_pty_close((struct win32_pty *)wp->win32_pty);
+			wp->win32_pty = NULL;
+			wp->fd = -1;
+		} else
+#endif
 		close(wp->fd);
 	}
 	if (wp->ictx != NULL)

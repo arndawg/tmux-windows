@@ -17,15 +17,21 @@
  */
 
 #include <sys/types.h>
+#ifndef _WIN32
 #include <sys/socket.h>
+#endif
 
 #include <errno.h>
 #include <fcntl.h>
+#ifndef _WIN32
 #include <signal.h>
+#endif
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 #include "tmux.h"
 
@@ -63,9 +69,12 @@ cmd_pipe_pane_exec(struct cmd *self, struct cmdq_item *item)
 	struct winlink			*wl = target->wl;
 	struct window_pane_offset	*wpo = &wp->pipe_offset;
 	char				*cmd;
-	int				 old_fd, pipe_fd[2], null_fd, in, out;
+	int				 old_fd, pipe_fd[2], in, out;
 	struct format_tree		*ft;
+#ifndef _WIN32
+	int				 null_fd;
 	sigset_t			 set, oldset;
+#endif
 
 	/* Do nothing if pane is dead. */
 	if (window_pane_exited(wp)) {
@@ -120,6 +129,44 @@ cmd_pipe_pane_exec(struct cmd *self, struct cmdq_item *item)
 	cmd = format_expand_time(ft, args_string(args, 0));
 	format_free(ft);
 
+#ifdef _WIN32
+	/*
+	 * Windows: use CreateProcess with redirected pipes instead of
+	 * fork/exec.
+	 */
+	{
+		pid_t child_pid;
+
+		child_pid = win32_process_spawn(cmd, NULL, pipe_fd[1]);
+		if (child_pid == -1) {
+			cmdq_error(item, "spawn error");
+			close(pipe_fd[0]);
+			close(pipe_fd[1]);
+			free(cmd);
+			return (CMD_RETURN_ERROR);
+		}
+		close(pipe_fd[1]);
+
+		wp->pipe_fd = pipe_fd[0];
+		memcpy(wpo, &wp->offset, sizeof *wpo);
+
+		setblocking(wp->pipe_fd, 0);
+		wp->pipe_event = bufferevent_new(wp->pipe_fd,
+		    cmd_pipe_pane_read_callback,
+		    cmd_pipe_pane_write_callback,
+		    cmd_pipe_pane_error_callback,
+		    wp);
+		if (wp->pipe_event == NULL)
+			fatalx("out of memory");
+		if (out)
+			bufferevent_enable(wp->pipe_event, EV_WRITE);
+		if (in)
+			bufferevent_enable(wp->pipe_event, EV_READ);
+
+		free(cmd);
+		return (CMD_RETURN_NORMAL);
+	}
+#else
 	/* Fork the child. */
 	sigfillset(&set);
 	sigprocmask(SIG_BLOCK, &set, &oldset);
@@ -183,6 +230,7 @@ cmd_pipe_pane_exec(struct cmd *self, struct cmdq_item *item)
 		free(cmd);
 		return (CMD_RETURN_NORMAL);
 	}
+#endif
 }
 
 static void

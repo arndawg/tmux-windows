@@ -16,7 +16,9 @@
 
 #include <sys/types.h>
 
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 #include "compat.h"
 
@@ -25,5 +27,11 @@ int
 getdtablesize(void)
 {
 	return (sysconf(_SC_OPEN_MAX));
+}
+#elif defined(_WIN32)
+int
+getdtablesize(void)
+{
+	return (2048);
 }
 #endif

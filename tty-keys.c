@@ -17,17 +17,25 @@
  */
 
 #include <sys/types.h>
+#ifndef _WIN32
 #include <sys/time.h>
+#endif
 
+#ifndef _WIN32
 #include <netinet/in.h>
+#endif
 
 #include <ctype.h>
 #include <limits.h>
+#ifndef _WIN32
 #include <resolv.h>
+#endif
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
 #include <termios.h>
 #include <unistd.h>
+#endif
 
 #include "tmux.h"
 

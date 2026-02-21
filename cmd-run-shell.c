@@ -18,7 +18,9 @@
  */
 
 #include <sys/types.h>
+#ifndef _WIN32
 #include <sys/wait.h>
+#endif
 
 #include <ctype.h>
 #include <stdlib.h>

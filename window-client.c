@@ -17,7 +17,9 @@
  */
 
 #include <sys/types.h>
+#ifndef _WIN32
 #include <sys/time.h>
+#endif
 
 #include <stdlib.h>
 #include <string.h>

@@ -19,7 +19,9 @@
 #include <sys/types.h>
 
 #include <ctype.h>
+#ifndef _WIN32
 #include <fnmatch.h>
+#endif
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>

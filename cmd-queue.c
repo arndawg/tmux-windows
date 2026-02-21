@@ -19,11 +19,15 @@
 #include <sys/types.h>
 
 #include <ctype.h>
+#ifndef _WIN32
 #include <pwd.h>
+#endif
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 #include "tmux.h"
 

@@ -19,7 +19,9 @@
 #include <sys/types.h>
 
 #include <stdlib.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 #include "tmux.h"
 

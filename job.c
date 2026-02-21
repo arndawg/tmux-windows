@@ -17,15 +17,21 @@
  */
 
 #include <sys/types.h>
+#ifndef _WIN32
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
+#endif
 
 #include <fcntl.h>
+#ifndef _WIN32
 #include <signal.h>
+#endif
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 #include "tmux.h"
 
@@ -77,12 +83,20 @@ job_run(const char *cmd, int argc, char **argv, struct environ *e,
 	struct job	 *job;
 	struct environ	 *env;
 	pid_t		  pid;
+#ifdef _WIN32
+	int		  out[2];
+	const char	 *shell;
+	char		 *cmdline, *argv0;
+	struct options	 *oo;
+	struct win32_pty *pty = NULL;
+#else
 	int		  nullfd, out[2], master, do_close = 1;
 	const char	 *home, *shell;
 	sigset_t	  set, oldset;
 	struct winsize	  ws;
 	char		**argvp, tty[TTY_NAME_MAX], *argv0;
 	struct options	 *oo;
+#endif
 
 	/*
 	 * Do not set TERM during .tmux.conf (second argument here), it is nice
@@ -106,6 +120,71 @@ job_run(const char *cmd, int argc, char **argv, struct environ *e,
 	}
 	argv0 = shell_argv0(shell, 0);
 
+	if (cmd == NULL) {
+		cmd_log_argv(argc, argv, "%s:", __func__);
+		log_debug("%s: cwd=%s, shell=%s", __func__,
+		    cwd == NULL ? "" : cwd, shell);
+	} else {
+		log_debug("%s: cmd=%s, cwd=%s, shell=%s", __func__, cmd,
+		    cwd == NULL ? "" : cwd, shell);
+	}
+
+#ifdef _WIN32
+	/* Windows: use ConPTY for PTY jobs, pipes + CreateProcess otherwise. */
+	if (flags & JOB_PTY) {
+		if (cmd != NULL)
+			xasprintf(&cmdline, "%s /c %s", shell, cmd);
+		else
+			cmdline = cmd_stringify_argv(argc, argv);
+		pty = win32_pty_spawn(cmdline, cwd, NULL, sx, sy, &pid);
+		free(cmdline);
+		if (pty == NULL)
+			goto fail;
+	} else {
+		if (socketpair(AF_UNIX, SOCK_STREAM, PF_UNSPEC, out) != 0)
+			goto fail;
+		if (cmd != NULL)
+			xasprintf(&cmdline, "%s /c %s", shell, cmd);
+		else
+			cmdline = cmd_stringify_argv(argc, argv);
+		pid = win32_process_spawn(cmdline, cwd, out[1]);
+		free(cmdline);
+		if (pid == -1) {
+			close(out[0]);
+			close(out[1]);
+			goto fail;
+		}
+	}
+
+	environ_free(env);
+	free(argv0);
+
+	job = xcalloc(1, sizeof *job);
+	job->state = JOB_RUNNING;
+	job->flags = flags;
+
+	if (cmd != NULL)
+		job->cmd = xstrdup(cmd);
+	else
+		job->cmd = cmd_stringify_argv(argc, argv);
+	job->pid = pid;
+	job->status = 0;
+
+	LIST_INSERT_HEAD(&all_jobs, job, entry);
+
+	job->updatecb = updatecb;
+	job->completecb = completecb;
+	job->freecb = freecb;
+	job->data = data;
+
+	if (flags & JOB_PTY)
+		job->fd = win32_pty_get_fd(pty);
+	else {
+		close(out[1]);
+		job->fd = out[0];
+	}
+	setblocking(job->fd, 0);
+#else
 	sigfillset(&set);
 	sigprocmask(SIG_BLOCK, &set, &oldset);
 
@@ -118,14 +197,6 @@ job_run(const char *cmd, int argc, char **argv, struct environ *e,
 		if (socketpair(AF_UNIX, SOCK_STREAM, PF_UNSPEC, out) != 0)
 			goto fail;
 		pid = fork();
-	}
-	if (cmd == NULL) {
-		cmd_log_argv(argc, argv, "%s:", __func__);
-		log_debug("%s: cwd=%s, shell=%s", __func__,
-		    cwd == NULL ? "" : cwd, shell);
-	} else {
-		log_debug("%s: cmd=%s, cwd=%s, shell=%s", __func__, cmd,
-		    cwd == NULL ? "" : cwd, shell);
 	}
 
 	switch (pid) {
@@ -221,6 +292,7 @@ job_run(const char *cmd, int argc, char **argv, struct environ *e,
 	} else
 		job->fd = master;
 	setblocking(job->fd, 0);
+#endif /* _WIN32 */
 
 	job->event = bufferevent_new(job->fd, job_read_callback,
 	    job_write_callback, job_error_callback, job);
@@ -232,7 +304,9 @@ job_run(const char *cmd, int argc, char **argv, struct environ *e,
 	return (job);
 
 fail:
+#ifndef _WIN32
 	sigprocmask(SIG_SETMASK, &oldset, NULL);
+#endif
 	environ_free(env);
 	free(argv0);
 	return (NULL);
@@ -290,18 +364,29 @@ job_free(struct job *job)
 void
 job_resize(struct job *job, u_int sx, u_int sy)
 {
+#ifndef _WIN32
 	struct winsize	 ws;
+#endif
 
 	if (job->fd == -1 || (~job->flags & JOB_PTY))
 		return;
 
 	log_debug("resize job %p: %ux%u", job, sx, sy);
 
+#ifdef _WIN32
+	/*
+	 * On Windows, PTY resize is handled via ConPTY at the window pane
+	 * level (window.c calls win32_pty_resize). Job-level PTY resize
+	 * is not yet implemented.
+	 */
+	log_debug("job_resize: not implemented on Windows");
+#else
 	memset(&ws, 0, sizeof ws);
 	ws.ws_col = sx;
 	ws.ws_row = sy;
 	if (ioctl(job->fd, TIOCSWINSZ, &ws) == -1)
 		fatal("ioctl failed");
+#endif
 }
 
 /* Job buffer read callback. */

@@ -19,12 +19,63 @@
 #include <sys/types.h>
 
 #include <errno.h>
+#ifndef _WIN32
 #include <signal.h>
+#endif
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 #include "tmux.h"
+
+#ifdef _WIN32
+/*
+ * Build a Windows Unicode environment block from a tmux environ struct.
+ * The block format is: L"KEY=VALUE\0KEY=VALUE\0\0" (wide strings).
+ * Returns an allocated block suitable for CreateProcessW with
+ * CREATE_UNICODE_ENVIRONMENT, or NULL on failure. Caller must free().
+ */
+static char *
+environ_to_win32_block(struct environ *env)
+{
+	struct environ_entry	*ee;
+	size_t			 total = 0;
+	wchar_t			*block, *p;
+	int			 nlen, vlen;
+
+	/* First pass: calculate total wchar_t count needed. */
+	for (ee = environ_first(env); ee != NULL; ee = environ_next(ee)) {
+		if (ee->value == NULL || *ee->name == '\0')
+			continue;
+		nlen = MultiByteToWideChar(CP_UTF8, 0, ee->name, -1, NULL, 0);
+		vlen = MultiByteToWideChar(CP_UTF8, 0, ee->value, -1, NULL, 0);
+		/* name (without NUL) + '=' + value (with NUL as separator) */
+		total += (nlen - 1) + 1 + vlen;
+	}
+	total += 1; /* final NUL terminator */
+
+	block = xcalloc(total, sizeof(wchar_t));
+	p = block;
+
+	/* Second pass: build the block. */
+	for (ee = environ_first(env); ee != NULL; ee = environ_next(ee)) {
+		if (ee->value == NULL || *ee->name == '\0')
+			continue;
+		nlen = MultiByteToWideChar(CP_UTF8, 0, ee->name, -1, p,
+		    (int)(total - (p - block)));
+		p += nlen - 1; /* advance past name, overwrite NUL */
+		*p++ = L'=';
+		vlen = MultiByteToWideChar(CP_UTF8, 0, ee->value, -1, p,
+		    (int)(total - (p - block)));
+		p += vlen; /* advance past value including its NUL separator */
+	}
+	*p = L'\0'; /* final double-NUL terminator */
+
+	return ((char *)block);
+}
+#endif
 
 /*
  * Set up the environment and create a new window and pane or a new pane.
@@ -357,8 +408,10 @@ spawn_pane(struct spawn_context *sc, char **cause)
 	ws.ws_ypixel = w->ypixel * ws.ws_row;
 
 	/* Block signals until fork has completed. */
+#ifndef _WIN32
 	sigfillset(&set);
 	sigprocmask(SIG_BLOCK, &set, &oldset);
+#endif
 
 	/* If the command is empty, don't fork a child process. */
 	if (sc->flags & SPAWN_EMPTY) {
@@ -368,6 +421,66 @@ spawn_pane(struct spawn_context *sc, char **cause)
 		goto complete;
 	}
 
+#ifdef _WIN32
+	{
+		/*
+		 * Windows: use ConPTY + CreateProcess instead of fdforkpty.
+		 * Build command line, create pseudo console, launch process.
+		 */
+		struct win32_pty	*pty;
+		char			*cmdline, *envblock;
+		const char		*shell = new_wp->shell;
+
+		if (new_wp->argc == 1) {
+			xasprintf(&cmdline, "\"%s\" /c %s", shell,
+			    new_wp->argv[0]);
+		} else if (new_wp->argc > 1) {
+			int i;
+			size_t total = 0;
+			for (i = 0; i < new_wp->argc; i++)
+				total += strlen(new_wp->argv[i]) + 1;
+			cmdline = xmalloc(total + 1);
+			*cmdline = '\0';
+			for (i = 0; i < new_wp->argc; i++) {
+				if (i > 0)
+					strlcat(cmdline, " ", total + 1);
+				strlcat(cmdline, new_wp->argv[i], total + 1);
+			}
+		} else {
+			/* Login shell. */
+			xasprintf(&cmdline, "\"%s\"", shell);
+		}
+
+		envblock = environ_to_win32_block(child);
+		pty = win32_pty_spawn(cmdline,
+		    new_wp->cwd ? new_wp->cwd : ".",
+		    envblock,
+		    (int)ws.ws_col, (int)ws.ws_row,
+		    &new_wp->pid);
+		free(envblock);
+		free(cmdline);
+
+		if (pty == NULL) {
+			xasprintf(cause, "spawn failed");
+			new_wp->fd = -1;
+			if (~sc->flags & SPAWN_RESPAWN) {
+				server_client_remove_pane(new_wp);
+				layout_close_pane(new_wp);
+				window_remove_pane(w, new_wp);
+			}
+			environ_free(child);
+			return (NULL);
+		}
+
+		new_wp->fd = win32_pty_get_fd(pty);
+		new_wp->win32_pty = pty;
+		strlcpy(new_wp->tty, "conpty", sizeof new_wp->tty);
+
+		/* Watch for child exit. */
+		win32_process_watch(win32_pty_get_process(pty), new_wp->pid);
+		goto complete;
+	}
+#else
     /* Store current working directory and change to new one. */
 	if (getcwd(path, sizeof path) != NULL) {
 		if (chdir(new_wp->cwd) == 0)
@@ -392,7 +505,9 @@ spawn_pane(struct spawn_context *sc, char **cause)
 		environ_free(child);
 		return (NULL);
 	}
+#endif
 
+#ifndef _WIN32
 	/*
 	 * In the parent process, everything is done now. Change the working
 	 * directory back.
@@ -446,7 +561,9 @@ spawn_pane(struct spawn_context *sc, char **cause)
 	sigprocmask(SIG_SETMASK, &oldset, NULL);
 	log_close();
 	environ_push(child);
+#endif /* !_WIN32 */
 
+#ifndef _WIN32
 	/*
 	 * If given multiple arguments, use execvp(). Copy the arguments to
 	 * ensure they end in a NULL.
@@ -477,6 +594,7 @@ spawn_pane(struct spawn_context *sc, char **cause)
 		xasprintf(&argv0, "-%s", new_wp->shell);
 	execl(new_wp->shell, argv0, (char *)NULL);
 	_exit(1);
+#endif /* !_WIN32 */
 
 complete:
 #ifdef HAVE_UTEMPTER
@@ -490,7 +608,9 @@ complete:
 
 	new_wp->flags &= ~PANE_EXITED;
 
+#ifndef _WIN32
 	sigprocmask(SIG_SETMASK, &oldset, NULL);
+#endif
 	window_pane_set_event(new_wp);
 
 	environ_free(child);

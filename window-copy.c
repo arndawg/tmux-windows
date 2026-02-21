@@ -19,7 +19,9 @@
 #include <sys/types.h>
 
 #include <ctype.h>
+#ifndef _WIN32
 #include <regex.h>
+#endif
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>

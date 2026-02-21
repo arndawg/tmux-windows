@@ -17,17 +17,23 @@
  */
 
 #include <sys/types.h>
+#ifndef _WIN32
 #include <sys/socket.h>
 #include <sys/uio.h>
 #include <sys/utsname.h>
+#endif
 
 #include <errno.h>
+#ifndef _WIN32
 #include <signal.h>
+#endif
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
-#if defined(HAVE_NCURSES_H)
+#if defined(HAVE_NCURSES_H) && !defined(_WIN32)
 #include <ncurses.h>
 #endif
 
@@ -121,7 +127,16 @@ proc_signal_cb(int signo, __unused short events, void *arg)
 {
 	struct tmuxproc	*tp = arg;
 
+#ifdef _WIN32
+	/*
+	 * On Windows, signals arrive as bytes on the signal pipe.
+	 * Read and dispatch all pending signal bytes.
+	 */
+	(void)signo;
+	win32_signal_dispatch();
+#else
 	tp->signalcb(signo);
+#endif
 }
 
 static int
@@ -190,7 +205,8 @@ proc_start(const char *name)
 	log_debug("%s started (%ld): version %s, socket %s, protocol %d", name,
 	    (long)getpid(), getversion(), socket_path, PROTOCOL_VERSION);
 	log_debug("on %s %s %s", u.sysname, u.release, u.version);
-	log_debug("using libevent %s %s", event_get_version(), event_get_method());
+	log_debug("using libevent %s %s", event_get_version(),
+	    event_get_method());
 #ifdef HAVE_UTF8PROC
 	log_debug("using utf8proc %s", utf8proc_version());
 #endif
@@ -228,6 +244,24 @@ proc_exit(struct tmuxproc *tp)
 void
 proc_set_signals(struct tmuxproc *tp, void (*signalcb)(int))
 {
+#ifdef _WIN32
+	tp->signalcb = signalcb;
+	win32_signal_init();
+	win32_signal_set_callback(signalcb);
+
+	/*
+	 * Register the signal pipe FD with libevent so signal
+	 * notifications are processed in the event loop.
+	 */
+	{
+		int sigfd = win32_signal_get_fd();
+		if (sigfd >= 0) {
+			event_set(&tp->ev_sigint, sigfd, EV_READ|EV_PERSIST,
+			    proc_signal_cb, tp);
+			event_add(&tp->ev_sigint, NULL);
+		}
+	}
+#else
 	struct sigaction	sa;
 
 	tp->signalcb = signalcb;
@@ -259,11 +293,18 @@ proc_set_signals(struct tmuxproc *tp, void (*signalcb)(int))
 	signal_add(&tp->ev_sigusr2, NULL);
 	signal_set(&tp->ev_sigwinch, SIGWINCH, proc_signal_cb, tp);
 	signal_add(&tp->ev_sigwinch, NULL);
+#endif
 }
 
 void
 proc_clear_signals(struct tmuxproc *tp, int defaults)
 {
+#ifdef _WIN32
+	(void)defaults;
+	if (event_initialized(&tp->ev_sigint))
+		event_del(&tp->ev_sigint);
+	win32_signal_cleanup();
+#else
 	struct sigaction	sa;
 
 	memset(&sa, 0, sizeof sa);
@@ -294,6 +335,7 @@ proc_clear_signals(struct tmuxproc *tp, int defaults)
 		sigaction(SIGUSR2, &sa, NULL);
 		sigaction(SIGWINCH, &sa, NULL);
 	}
+#endif
 }
 
 struct tmuxpeer *
@@ -333,7 +375,11 @@ proc_remove_peer(struct tmuxpeer *peer)
 	event_del(&peer->event);
 	imsgbuf_clear(&peer->ibuf);
 
+#ifdef _WIN32
+	closesocket((SOCKET)peer->ibuf.fd);
+#else
 	close(peer->ibuf.fd);
+#endif
 	free(peer);
 }
 
@@ -358,6 +404,44 @@ proc_toggle_log(struct tmuxproc *tp)
 pid_t
 proc_fork_and_daemon(int *fd)
 {
+#ifdef _WIN32
+	int		 pair[2];
+	char		 cmd[MAX_PATH + 256];
+	char		 exepath[MAX_PATH];
+	STARTUPINFOA	 si;
+	PROCESS_INFORMATION pi;
+
+	if (win32_socketpair(AF_INET, SOCK_STREAM, 0, pair) != 0)
+		fatal("socketpair failed");
+
+	GetModuleFileNameA(NULL, exepath, sizeof exepath);
+
+	/*
+	 * Launch server process detached.
+	 * Pass the socket handle as a command-line argument.
+	 * The server reads this with --server-fd.
+	 */
+	snprintf(cmd, sizeof cmd, "\"%s\" -D", exepath);
+
+	memset(&si, 0, sizeof si);
+	si.cb = sizeof si;
+	memset(&pi, 0, sizeof pi);
+
+	if (!CreateProcessA(NULL, cmd, NULL, NULL, TRUE,
+	    DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+	    NULL, NULL, &si, &pi)) {
+		closesocket((SOCKET)pair[0]);
+		closesocket((SOCKET)pair[1]);
+		fatal("CreateProcess failed");
+	}
+
+	CloseHandle(pi.hThread);
+	CloseHandle(pi.hProcess);
+
+	closesocket((SOCKET)pair[1]);
+	*fd = pair[0];
+	return ((pid_t)pi.dwProcessId);
+#else
 	pid_t	pid;
 	int	pair[2];
 
@@ -377,10 +461,17 @@ proc_fork_and_daemon(int *fd)
 		*fd = pair[0];
 		return (pid);
 	}
+#endif
 }
 
 uid_t
 proc_get_peer_uid(struct tmuxpeer *peer)
 {
 	return (peer->uid);
+}
+
+int
+proc_peer_fd(struct tmuxpeer *peer)
+{
+	return (peer->ibuf.fd);
 }

@@ -19,13 +19,19 @@
 
 #include <sys/types.h>
 #include <sys/stat.h>
+#ifndef _WIN32
 #include <sys/socket.h>
+#endif
 
 #include <ctype.h>
+#ifndef _WIN32
 #include <pwd.h>
+#endif
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 #include "tmux.h"
 

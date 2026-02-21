@@ -19,7 +19,9 @@
 #include <sys/types.h>
 
 #include <ctype.h>
+#ifndef _WIN32
 #include <libgen.h>
+#endif
 #include <stdlib.h>
 #include <string.h>
 
@@ -164,8 +166,19 @@ parse_window_name(const char *in)
 			*ptr-- = '\0';
 	}
 
+#ifdef _WIN32
+	if (*name == '/' || *name == '\\') {
+		char *slash = strrchr(name, '/');
+		char *bslash = strrchr(name, '\\');
+		if (bslash != NULL && (slash == NULL || bslash > slash))
+			slash = bslash;
+		if (slash != NULL && slash[1] != '\0')
+			name = slash + 1;
+	}
+#else
 	if (*name == '/')
 		name = basename(name);
+#endif
 	name = xstrdup(name);
 	free(copy);
 	return (name);

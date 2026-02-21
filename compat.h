@@ -17,6 +17,12 @@
 #ifndef COMPAT_H
 #define COMPAT_H
 
+#ifdef _WIN32
+#include "win32/win32-platform.h"
+#include <limits.h>
+#include <stdio.h>
+#include <wchar.h>
+#else
 #include <sys/types.h>
 #include <sys/ioctl.h>
 #include <sys/uio.h>
@@ -26,6 +32,7 @@
 #include <stdio.h>
 #include <termios.h>
 #include <wchar.h>
+#endif
 
 #ifdef HAVE_EVENT2_EVENT_H
 #include <event2/event.h>

@@ -707,10 +707,12 @@ mode_tree_draw(struct mode_tree_data *mtd)
 	char			*text, *start, *key;
 	const char		*tag, *symbol;
 	size_t			 size, n;
-	int			 keylen, pad, alignlen[mtd->maxdepth + 1];
+	int			 keylen, pad, *alignlen;
 
 	if (mtd->line_size == 0)
 		return;
+
+	alignlen = xmalloc((mtd->maxdepth + 1) * sizeof *alignlen);
 
 	memcpy(&gc0, &grid_default_cell, sizeof gc0);
 	memcpy(&gc, &grid_default_cell, sizeof gc);
@@ -826,6 +828,7 @@ mode_tree_draw(struct mode_tree_data *mtd)
 			gc0.attr ^= GRID_ATTR_BRIGHT;
 		}
 	}
+	free(alignlen);
 
 	if (mtd->preview == MODE_TREE_PREVIEW_OFF)
 		goto done;

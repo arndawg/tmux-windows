@@ -43,17 +43,23 @@
  */
 
 #include <sys/types.h>
+#ifndef _WIN32
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <arpa/nameser.h>
+#endif
 
 #include <ctype.h>
+#ifndef _WIN32
 #include <resolv.h>
+#endif
 #include <stdio.h>
 
 #include <stdlib.h>
 #include <string.h>
+
+#include "compat.h"
 
 static const char Base64[] =
 	"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

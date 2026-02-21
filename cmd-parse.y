@@ -22,10 +22,14 @@
 
 #include <ctype.h>
 #include <errno.h>
+#ifndef _WIN32
 #include <pwd.h>
+#endif
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 #include <wchar.h>
 
 #include "tmux.h"

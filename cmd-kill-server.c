@@ -18,8 +18,10 @@
 
 #include <sys/types.h>
 
+#ifndef _WIN32
 #include <signal.h>
 #include <unistd.h>
+#endif
 
 #include "tmux.h"
 

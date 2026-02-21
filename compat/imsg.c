@@ -18,14 +18,18 @@
  */
 
 #include <sys/types.h>
+#ifndef _WIN32
 #include <sys/socket.h>
 #include <sys/uio.h>
+#endif
 
 #include <errno.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 #include "compat.h"
 #include "imsg.h"

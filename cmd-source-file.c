@@ -20,7 +20,9 @@
 
 #include <ctype.h>
 #include <errno.h>
+#ifndef _WIN32
 #include <glob.h>
+#endif
 #include <stdlib.h>
 #include <string.h>
 
@@ -165,8 +167,11 @@ cmd_source_file_exec(struct cmd *self, struct cmdq_item *item)
 	enum cmd_retval			 retval = CMD_RETURN_NORMAL;
 	char				*pattern, *cwd, *expanded = NULL;
 	const char			*path, *error;
+#ifndef _WIN32
 	glob_t				 g;
-	int				 result, parse_flags;
+	int				 result;
+#endif
+	int				 parse_flags;
 	u_int				 i, j;
 
 	if (c == NULL) {
@@ -212,12 +217,21 @@ cmd_source_file_exec(struct cmd *self, struct cmdq_item *item)
 			continue;
 		}
 
-		if (*path == '/')
+		if (*path == '/'
+#ifdef _WIN32
+		    || (*path != '\0' && path[1] == ':')
+#endif
+		    )
 			pattern = xstrdup(path);
 		else
 			xasprintf(&pattern, "%s/%s", cwd, path);
 		log_debug("%s: %s", __func__, pattern);
 
+#ifdef _WIN32
+		/* No glob on Windows; treat each path literally. */
+		cmd_source_file_add(cdata, pattern);
+		free(pattern);
+#else
 		if ((result = glob(pattern, 0, NULL, &g)) != 0) {
 			if (result != GLOB_NOMATCH ||
 			    (~cdata->flags & CMD_PARSE_QUIET)) {
@@ -239,6 +253,7 @@ cmd_source_file_exec(struct cmd *self, struct cmdq_item *item)
 		for (j = 0; j < g.gl_pathc; j++)
 			cmd_source_file_add(cdata, g.gl_pathv[j]);
 		globfree(&g);
+#endif
 	}
 	free(expanded);
 

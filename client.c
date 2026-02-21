@@ -17,18 +17,24 @@
  */
 
 #include <sys/types.h>
+#ifndef _WIN32
 #include <sys/socket.h>
 #include <sys/uio.h>
 #include <sys/un.h>
 #include <sys/wait.h>
 #include <sys/file.h>
+#endif
 
 #include <errno.h>
 #include <fcntl.h>
+#ifndef _WIN32
 #include <signal.h>
+#endif
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 #include "tmux.h"
 
@@ -104,6 +110,49 @@ client_get_lock(char *lockfile)
 static int
 client_connect(struct event_base *base, const char *path, uint64_t flags)
 {
+#ifdef _WIN32
+	int	fd, retries;
+
+	log_debug("connecting to server label %s", path);
+
+	fd = win32_ipc_connect(path);
+	if (fd != -1) {
+		setblocking(fd, 0);
+		return (fd);
+	}
+
+	log_debug("connect failed, starting server");
+
+	if (flags & CLIENT_NOSTARTSERVER)
+		return (-1);
+	if (~flags & CLIENT_STARTSERVER)
+		return (-1);
+
+	if (flags & CLIENT_NOFORK) {
+		/*
+		 * This process IS the server (launched with -D).
+		 * Call server_start() inline; it enters the event loop
+		 * and never returns for CLIENT_NOFORK.
+		 */
+		fd = server_start(client_proc, flags, base, -1, NULL);
+		setblocking(fd, 0);
+		return (fd);
+	}
+
+	/* Launch a detached server process and poll-retry connection. */
+	win32_launch_server(path);
+	for (retries = 0; retries < 50; retries++) {
+		Sleep(100);
+		fd = win32_ipc_connect(path);
+		if (fd != -1) {
+			setblocking(fd, 0);
+			return (fd);
+		}
+	}
+
+	log_debug("server did not start in time");
+	return (-1);
+#else
 	struct sockaddr_un	sa;
 	size_t			size;
 	int			fd, lockfd = -1, locked = 0;
@@ -178,6 +227,7 @@ failed:
 	}
 	close(fd);
 	return (-1);
+#endif
 }
 
 /* Get exit string from reason number. */
@@ -302,11 +352,19 @@ client_main(struct event_base *base, int argc, char **argv, uint64_t flags,
 
 	/* Save these before pledge(). */
 	if ((cwd = find_cwd()) == NULL && (cwd = find_home()) == NULL)
+#ifdef _WIN32
+		cwd = "C:\\";
+#else
 		cwd = "/";
+#endif
 	if ((ttynam = ttyname(STDIN_FILENO)) == NULL)
 		ttynam = "";
 	if ((termname = getenv("TERM")) == NULL)
+#ifdef _WIN32
+		termname = "xterm-256color";
+#else
 		termname = "";
+#endif
 
 	/*
 	 * Drop privileges for client. "proc exec" is needed for -c and for
@@ -427,7 +485,11 @@ client_main(struct event_base *base, int argc, char **argv, uint64_t flags,
 			printf("%%exit\n");
 		fflush(stdout);
 		if (client_flags & CLIENT_CONTROL_WAITEXIT) {
+#ifdef _WIN32
+			setvbuf(stdin, NULL, _IOLBF, BUFSIZ);
+#else
 			setvbuf(stdin, NULL, _IOLBF, 0);
+#endif
 			for (;;) {
 				linelen = getline(&line, &linesize, stdin);
 				if (linelen <= 1)
@@ -474,12 +536,18 @@ client_send_identify(const char *ttynam, const char *termname, char **caps,
 		    caps[i], strlen(caps[i]) + 1);
 	}
 
+#ifdef _WIN32
+	/* On Windows, we don't pass FDs. Send -1 and use the proxy model. */
+	proc_send(client_peer, MSG_IDENTIFY_STDIN, -1, NULL, 0);
+	proc_send(client_peer, MSG_IDENTIFY_STDOUT, -1, NULL, 0);
+#else
 	if ((fd = dup(STDIN_FILENO)) == -1)
 		fatal("dup failed");
 	proc_send(client_peer, MSG_IDENTIFY_STDIN, fd, NULL, 0);
 	if ((fd = dup(STDOUT_FILENO)) == -1)
 		fatal("dup failed");
 	proc_send(client_peer, MSG_IDENTIFY_STDOUT, fd, NULL, 0);
+#endif
 
 	pid = getpid();
 	proc_send(client_peer, MSG_IDENTIFY_CLIENTPID, -1, &pid, sizeof pid);
@@ -498,6 +566,16 @@ client_send_identify(const char *ttynam, const char *termname, char **caps,
 static __dead void
 client_exec(const char *shell, const char *shellcmd)
 {
+#ifdef _WIN32
+	char cmd[32768];
+
+	log_debug("shell %s, command %s", shell, shellcmd);
+	proc_clear_signals(client_proc, 1);
+
+	snprintf(cmd, sizeof cmd, "\"%s\" /c %s", shell, shellcmd);
+	system(cmd);
+	exit(0);
+#else
 	char	*argv0;
 
 	log_debug("shell %s, command %s", shell, shellcmd);
@@ -513,18 +591,22 @@ client_exec(const char *shell, const char *shellcmd)
 
 	execl(shell, argv0, "-c", shellcmd, (char *) NULL);
 	fatal("execl failed");
+#endif
 }
 
 /* Callback to handle signals in the client. */
 static void
 client_signal(int sig)
 {
+#ifndef _WIN32
 	struct sigaction sigact;
 	int		 status;
 	pid_t		 pid;
+#endif
 
 	log_debug("%s: %s", __func__, strsignal(sig));
 	if (sig == SIGCHLD) {
+#ifndef _WIN32
 		for (;;) {
 			pid = waitpid(WAIT_ANY, &status, WNOHANG);
 			if (pid == 0)
@@ -536,6 +618,7 @@ client_signal(int sig)
 				    strerror(errno));
 			}
 		}
+#endif
 	} else if (!client_attached) {
 		if (sig == SIGTERM || sig == SIGHUP)
 			proc_exit(client_proc);
@@ -555,6 +638,7 @@ client_signal(int sig)
 		case SIGWINCH:
 			proc_send(client_peer, MSG_RESIZE, -1, NULL, 0);
 			break;
+#ifndef _WIN32
 		case SIGCONT:
 			memset(&sigact, 0, sizeof sigact);
 			sigemptyset(&sigact.sa_mask);
@@ -565,6 +649,7 @@ client_signal(int sig)
 			proc_send(client_peer, MSG_WAKEUP, -1, NULL, 0);
 			client_suspended = 0;
 			break;
+#endif
 		}
 	}
 }
@@ -789,6 +874,9 @@ client_dispatch_attached(struct imsg *imsg)
 		if (datalen != 0)
 			fatalx("bad MSG_SUSPEND size");
 
+#ifdef _WIN32
+		/* No suspend on Windows, just ignore. */
+#else
 		memset(&sigact, 0, sizeof sigact);
 		sigemptyset(&sigact.sa_mask);
 		sigact.sa_flags = SA_RESTART;
@@ -797,6 +885,7 @@ client_dispatch_attached(struct imsg *imsg)
 			fatal("sigaction failed");
 		client_suspended = 1;
 		kill(getpid(), SIGTSTP);
+#endif
 		break;
 	case MSG_LOCK:
 		if (datalen == 0 || data[datalen - 1] != '\0')

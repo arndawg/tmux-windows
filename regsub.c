@@ -18,7 +18,9 @@
 
 #include <sys/types.h>
 
+#ifndef _WIN32
 #include <regex.h>
+#endif
 #include <string.h>
 
 #include "tmux.h"

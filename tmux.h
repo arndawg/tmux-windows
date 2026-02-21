@@ -19,13 +19,16 @@
 #ifndef TMUX_H
 #define TMUX_H
 
+#ifdef _WIN32
+#include <stdarg.h>
+#else
 #include <sys/time.h>
 #include <sys/uio.h>
+#include <termios.h>
+#endif
 
 #include <limits.h>
-#include <stdarg.h>
 #include <stdio.h>
-#include <termios.h>
 #include <wchar.h>
 
 #ifdef HAVE_UTEMPTER
@@ -1238,6 +1241,10 @@ struct window_pane {
 
 	struct input_ctx *ictx;
 
+#ifdef _WIN32
+	void		*win32_pty; /* struct win32_pty * */
+#endif
+
 	struct grid_cell cached_gc;
 	struct grid_cell cached_active_gc;
 	struct colour_palette palette;
@@ -2331,6 +2338,7 @@ void	proc_flush_peer(struct tmuxpeer *);
 void	proc_toggle_log(struct tmuxproc *);
 pid_t	proc_fork_and_daemon(int *);
 uid_t	proc_get_peer_uid(struct tmuxpeer *);
+int	proc_peer_fd(struct tmuxpeer *);
 
 /* cfg.c */
 extern int cfg_finished;

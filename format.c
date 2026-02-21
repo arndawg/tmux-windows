@@ -17,20 +17,30 @@
  */
 
 #include <sys/types.h>
+#ifndef _WIN32
 #include <sys/wait.h>
+#endif
 
 #include <ctype.h>
 #include <errno.h>
+#ifndef _WIN32
 #include <fnmatch.h>
 #include <libgen.h>
+#endif
 #include <math.h>
+#ifndef _WIN32
 #include <pwd.h>
+#endif
+#ifndef _WIN32
 #include <regex.h>
+#endif
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 #include "tmux.h"
 

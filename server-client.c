@@ -17,15 +17,19 @@
  */
 
 #include <sys/types.h>
+#ifndef _WIN32
 #include <sys/ioctl.h>
 #include <sys/uio.h>
+#endif
 
 #include <errno.h>
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 #include "tmux.h"
 
@@ -510,10 +514,19 @@ server_client_lost(struct client *c)
 
 	if (c->out_fd != -1)
 		close(c->out_fd);
+#ifdef _WIN32
+	/*
+	 * On Windows, c->fd is the peer's Winsock socket (set in
+	 * server_client_dispatch_identify). It was already closed by
+	 * proc_remove_peer() above, so just clear it.
+	 */
+	c->fd = -1;
+#else
 	if (c->fd != -1) {
 		close(c->fd);
 		c->fd = -1;
 	}
+#endif
 	server_client_unref(c);
 
 	server_add_accept(0); /* may be more file descriptors now */
@@ -3440,6 +3453,28 @@ server_client_dispatch(struct imsg *imsg, void *arg)
 		tty_close(&c->tty);
 		proc_send(c->peer, MSG_EXITED, -1, NULL, 0);
 		break;
+#ifdef _WIN32
+	case MSG_WIN32_TTY_INPUT:
+		/* Client sent raw terminal input; feed into tty input buffer. */
+		if (datalen > 0 && c->tty.in != NULL)
+			evbuffer_add(c->tty.in, imsg->data, datalen);
+		break;
+	case MSG_WIN32_TTY_RESIZE:
+		/* Client reported a terminal resize. */
+		if (c->flags & CLIENT_CONTROL)
+			break;
+		server_client_update_latest(c);
+		tty_resize(&c->tty);
+		recalculate_sizes();
+		if (c->overlay_resize == NULL)
+			server_client_clear_overlay(c);
+		else
+			c->overlay_resize(c, c->overlay_data);
+		server_redraw_client(c);
+		if (c->session != NULL)
+			notify_client("client-resized", c);
+		break;
+#endif
 	case MSG_WAKEUP:
 	case MSG_UNLOCK:
 		if (datalen != 0)
@@ -3720,11 +3755,24 @@ server_client_dispatch_identify(struct client *c, struct imsg *imsg)
 	c->out_fd = dup(c->fd);
 #endif
 
+#ifdef _WIN32
+	/*
+	 * On Windows, we can't pass FDs. Use the peer's imsg socket
+	 * as the client fd for tty I/O via the data proxy model.
+	 */
+	if (c->fd == -1 && !(c->flags & CLIENT_CONTROL)) {
+		c->fd = proc_peer_fd(c->peer);
+		log_debug("client %p using peer fd %d for tty", c, c->fd);
+	}
+#endif
+
 	if (c->flags & CLIENT_CONTROL)
 		control_start(c);
 	else if (c->fd != -1) {
 		if (tty_init(&c->tty, c) != 0) {
+#ifndef _WIN32
 			close(c->fd);
+#endif
 			c->fd = -1;
 		} else {
 			tty_resize(&c->tty);

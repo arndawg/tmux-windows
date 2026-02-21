@@ -18,16 +18,23 @@
  */
 
 #include <sys/types.h>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <sys/socket.h>
 #include <sys/uio.h>
 #include <arpa/inet.h>
+#endif
 
 #include <limits.h>
 #include <errno.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 #include "compat.h"
 #include "imsg.h"
@@ -724,6 +731,32 @@ msgbuf_concat(struct msgbuf *msgbuf, struct ibufqueue *from)
 int
 ibuf_write(int fd, struct msgbuf *msgbuf)
 {
+#ifdef _WIN32
+	struct ibuf	*buf;
+	ssize_t		 n;
+	size_t		 total = 0;
+
+	TAILQ_FOREACH(buf, &msgbuf->bufs.bufs, entry) {
+ again:
+		if ((n = send(fd, ibuf_data(buf), ibuf_size(buf), 0)) == -1) {
+			int wsa_err = WSAGetLastError();
+			if (wsa_err == WSAEINTR)
+				goto again;
+			if (wsa_err == WSAEWOULDBLOCK || wsa_err == WSAENOBUFS) {
+				if (total > 0)
+					break;
+				return (0);
+			}
+			return (-1);
+		}
+		total += n;
+	}
+	if (total == 0)
+		return (0);	/* nothing queued */
+
+	msgbuf_drain(msgbuf, total);
+	return (0);
+#else
 	struct iovec	 iov[IOV_MAX];
 	struct ibuf	*buf;
 	unsigned int	 i = 0;
@@ -752,11 +785,42 @@ ibuf_write(int fd, struct msgbuf *msgbuf)
 
 	msgbuf_drain(msgbuf, n);
 	return (0);
+#endif
 }
 
 int
 msgbuf_write(int fd, struct msgbuf *msgbuf)
 {
+#ifdef _WIN32
+	/*
+	 * Windows does not support sendmsg/SCM_RIGHTS fd passing.
+	 * Use simple send() calls instead.
+	 */
+	struct ibuf	*buf;
+	ssize_t		 n;
+	size_t		 total = 0;
+
+	TAILQ_FOREACH(buf, &msgbuf->bufs.bufs, entry) {
+ again:
+		if ((n = send(fd, ibuf_data(buf), ibuf_size(buf), 0)) == -1) {
+			int wsa_err = WSAGetLastError();
+			if (wsa_err == WSAEINTR)
+				goto again;
+			if (wsa_err == WSAEWOULDBLOCK || wsa_err == WSAENOBUFS) {
+				if (total > 0)
+					break;
+				return (0);
+			}
+			return (-1);
+		}
+		total += n;
+	}
+	if (total == 0)
+		return (0);	/* nothing queued */
+
+	msgbuf_drain(msgbuf, total);
+	return (0);
+#else
 	struct iovec	 iov[IOV_MAX];
 	struct ibuf	*buf, *buf0 = NULL;
 	unsigned int	 i = 0;
@@ -821,6 +885,7 @@ msgbuf_write(int fd, struct msgbuf *msgbuf)
 	msgbuf_drain(msgbuf, n);
 
 	return (0);
+#endif
 }
 
 static int
@@ -877,13 +942,27 @@ ibuf_read_process(struct msgbuf *msgbuf, int fd)
 int
 ibuf_read(int fd, struct msgbuf *msgbuf)
 {
-	struct iovec	iov;
 	ssize_t		n;
 
 	if (msgbuf->rbuf == NULL) {
 		errno = EINVAL;
 		return (-1);
 	}
+
+#ifdef _WIN32
+ again:
+	if ((n = recv(fd, msgbuf->rbuf + msgbuf->roff,
+	    IBUF_READ_SIZE - msgbuf->roff, 0)) == -1) {
+		int wsa_err = WSAGetLastError();
+		if (wsa_err == WSAEINTR)
+			goto again;
+		if (wsa_err == WSAEWOULDBLOCK)
+			/* lets retry later again */
+			return (1);
+		return (-1);
+	}
+#else
+	struct iovec	iov;
 
 	iov.iov_base = msgbuf->rbuf + msgbuf->roff;
 	iov.iov_len = IBUF_READ_SIZE - msgbuf->roff;
@@ -897,6 +976,7 @@ ibuf_read(int fd, struct msgbuf *msgbuf)
 			return (1);
 		return (-1);
 	}
+#endif
 	if (n == 0)	/* connection closed */
 		return (0);
 
@@ -908,6 +988,37 @@ ibuf_read(int fd, struct msgbuf *msgbuf)
 int
 msgbuf_read(int fd, struct msgbuf *msgbuf)
 {
+#ifdef _WIN32
+	/*
+	 * Windows does not support recvmsg/SCM_RIGHTS fd passing.
+	 * Use simple recv() instead.
+	 */
+	ssize_t			 n;
+
+	if (msgbuf->rbuf == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+
+again:
+	if ((n = recv(fd, msgbuf->rbuf + msgbuf->roff,
+	    IBUF_READ_SIZE - msgbuf->roff, 0)) == -1) {
+		int wsa_err = WSAGetLastError();
+		if (wsa_err == WSAEINTR)
+			goto again;
+		if (wsa_err == WSAEWOULDBLOCK)
+			/* lets retry later again */
+			return (1);
+		return (-1);
+	}
+	if (n == 0)	/* connection closed */
+		return (0);
+
+	msgbuf->roff += n;
+
+	/* new data arrived, try to process it (no fd passing on Windows) */
+	return (ibuf_read_process(msgbuf, -1));
+#else
 	struct msghdr		 msg;
 	struct cmsghdr		*cmsg;
 	union {
@@ -980,6 +1091,7 @@ again:
 
 	/* new data arrived, try to process it */
 	return (ibuf_read_process(msgbuf, fdpass));
+#endif
 }
 
 static void
