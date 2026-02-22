@@ -185,6 +185,9 @@ win32_ipc_create_server(const char *label, uint16_t *out_port)
 	}
 	port = ntohs(addr.sin_port);
 
+	/* Create auth token before listen() to prevent unauthenticated window. */
+	win32_ipc_create_auth_token(label);
+
 	if (listen(s, 128) != 0) {
 		closesocket(s);
 		return (-1);
@@ -200,9 +203,6 @@ win32_ipc_create_server(const char *label, uint16_t *out_port)
 		}
 		free(port_path);
 	}
-
-	/* Create auth token. */
-	win32_ipc_create_auth_token(label);
 
 	if (out_port != NULL)
 		*out_port = port;
@@ -321,7 +321,7 @@ win32_ipc_verify_auth(int fd, const char *label, char *tty_token_out,
 
 	expected = read_auth_token(label);
 	if (expected == NULL)
-		return (0); /* No auth token file, allow anyway. */
+		return (-1); /* No auth token file, reject connection. */
 
 	/*
 	 * The accepted socket may be non-blocking (inherited from the
