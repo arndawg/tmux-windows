@@ -51,6 +51,9 @@ tmux-out-*.log
 client-new.log
 build_*.bat
 
+# Local project management
+TODO.md
+
 # WinFlexBison
 winflex/
 winflex.zip
