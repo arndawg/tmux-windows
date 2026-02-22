@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "win32-platform.h"
+#include <sddl.h>
 
 /*
  * RtlGenRandom is exported as SystemFunction036 from advapi32.dll.
@@ -18,6 +19,80 @@
  */
 #define RtlGenRandom SystemFunction036
 BOOLEAN NTAPI RtlGenRandom(PVOID RandomBuffer, ULONG RandomBufferLength);
+
+/*
+ * Create a file accessible only by the current user.
+ * Uses a DACL with a single ACE granting GENERIC_ALL to the current user SID.
+ * Returns a HANDLE or INVALID_HANDLE_VALUE on failure.
+ */
+static HANDLE
+create_user_only_file(const char *path)
+{
+	HANDLE h, token;
+	DWORD len;
+	TOKEN_USER *tu = NULL;
+	char *sid_str = NULL;
+	char sddl[256];
+	SECURITY_ATTRIBUTES sa;
+	SECURITY_DESCRIPTOR *sd = NULL;
+
+	/* Get current user SID. */
+	if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
+		return (INVALID_HANDLE_VALUE);
+
+	GetTokenInformation(token, TokenUser, NULL, 0, &len);
+	tu = malloc(len);
+	if (tu == NULL || !GetTokenInformation(token, TokenUser, tu, len, &len)) {
+		free(tu);
+		CloseHandle(token);
+		return (INVALID_HANDLE_VALUE);
+	}
+	CloseHandle(token);
+
+	if (!ConvertSidToStringSidA(tu->User.Sid, &sid_str)) {
+		free(tu);
+		return (INVALID_HANDLE_VALUE);
+	}
+	free(tu);
+
+	/* Build SDDL: owner=current user, DACL grants only current user full access. */
+	snprintf(sddl, sizeof sddl, "D:P(A;;GA;;;%s)", sid_str);
+	LocalFree(sid_str);
+
+	if (!ConvertStringSecurityDescriptorToSecurityDescriptorA(
+	    sddl, SDDL_REVISION_1, (PSECURITY_DESCRIPTOR *)&sd, NULL))
+		return (INVALID_HANDLE_VALUE);
+
+	memset(&sa, 0, sizeof sa);
+	sa.nLength = sizeof sa;
+	sa.lpSecurityDescriptor = sd;
+	sa.bInheritHandle = FALSE;
+
+	h = CreateFileA(path, GENERIC_WRITE, 0, &sa, CREATE_ALWAYS,
+	    FILE_ATTRIBUTE_NORMAL, NULL);
+
+	LocalFree(sd);
+	return (h);
+}
+
+/*
+ * Write a string to a user-only file. Returns 0 on success, -1 on failure.
+ */
+static int
+write_user_only_file(const char *path, const char *content)
+{
+	HANDLE h;
+	DWORD written;
+	DWORD len = (DWORD)strlen(content);
+
+	h = create_user_only_file(path);
+	if (h == INVALID_HANDLE_VALUE)
+		return (-1);
+
+	WriteFile(h, content, len, &written, NULL);
+	CloseHandle(h);
+	return (written == len ? 0 : -1);
+}
 
 #define AUTH_TOKEN_LEN 32
 
@@ -91,7 +166,6 @@ win32_ipc_create_auth_token(const char *label)
 	char *path;
 	unsigned char random_bytes[AUTH_TOKEN_LEN];
 	char hex[AUTH_TOKEN_LEN * 2 + 1];
-	FILE *f;
 	int i;
 
 	path = get_auth_token_path(label);
@@ -107,11 +181,7 @@ win32_ipc_create_auth_token(const char *label)
 	for (i = 0; i < AUTH_TOKEN_LEN; i++)
 		snprintf(hex + i * 2, 3, "%02x", random_bytes[i]);
 
-	f = fopen(path, "w");
-	if (f != NULL) {
-		fprintf(f, "%s", hex);
-		fclose(f);
-	}
+	write_user_only_file(path, hex);
 	free(path);
 }
 
@@ -154,7 +224,6 @@ win32_ipc_create_server(const char *label, uint16_t *out_port)
 	int addrlen = sizeof addr;
 	uint16_t port;
 	char *port_path;
-	FILE *f;
 
 	win32_wsa_init();
 
@@ -193,14 +262,12 @@ win32_ipc_create_server(const char *label, uint16_t *out_port)
 		return (-1);
 	}
 
-	/* Write port to file. */
+	/* Write port to file (user-only ACL). */
 	port_path = get_port_file_path(label);
 	if (port_path != NULL) {
-		f = fopen(port_path, "w");
-		if (f != NULL) {
-			fprintf(f, "%u", (unsigned)port);
-			fclose(f);
-		}
+		char port_str[16];
+		snprintf(port_str, sizeof port_str, "%u", (unsigned)port);
+		write_user_only_file(port_path, port_str);
 		free(port_path);
 	}
 
