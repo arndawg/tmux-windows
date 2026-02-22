@@ -97,6 +97,31 @@ write_user_only_file(const char *path, const char *content)
 #define AUTH_TOKEN_LEN 32
 
 /*
+ * Constant-time string comparison to prevent timing side-channel attacks.
+ * Returns 0 if the strings are equal, non-zero otherwise.
+ * Both strings must be the same length; caller must check lengths first.
+ */
+static int
+timingsafe_strcmp(const char *a, const char *b)
+{
+	volatile unsigned char result = 0;
+	size_t alen = strlen(a);
+	size_t blen = strlen(b);
+	size_t len = alen;
+	size_t i;
+
+	/* Length mismatch: still compare to avoid leaking which is longer. */
+	result |= (alen != blen);
+	if (blen < len)
+		len = blen;
+
+	for (i = 0; i < len; i++)
+		result |= (unsigned char)a[i] ^ (unsigned char)b[i];
+
+	return (result != 0);
+}
+
+/*
  * Derive a deterministic port from a label string.
  * Returns a port in the ephemeral range (49152-65535).
  */
@@ -433,7 +458,7 @@ win32_ipc_verify_auth(int fd, const char *label, char *tty_token_out,
 		auth_part = buf;
 	}
 
-	if (strcmp(auth_part, expected) != 0) {
+	if (timingsafe_strcmp(auth_part, expected) != 0) {
 		free(expected);
 		return (-1);
 	}
