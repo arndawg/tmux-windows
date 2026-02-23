@@ -146,13 +146,15 @@ The remaining ~45 files have 2-12 line changes each, primarily:
 
 ## Regression Tests
 
-Windows-specific tests are in `regress/win32-basic.sh`. Run with:
+Windows-specific tests are in `regress/`. Run with:
 
 ```bash
 TEST_TMUX=./build/Debug/tmux.exe bash regress/win32-basic.sh
+TEST_TMUX=./build/Debug/tmux.exe bash regress/win32-claude-swarm.sh
 ```
 
-Test coverage:
+### win32-basic.sh
+
 1. Session lifecycle (new, ls, kill-session)
 2. Send-keys + capture-pane (ConPTY I/O)
 3. Split-window + list-panes (multiple ConPTY instances)
@@ -162,28 +164,117 @@ Test coverage:
 7. `-S` with Unix-style path (basename extraction + warning)
 8. `default-shell` fallback from Unix path to `cmd.exe`
 
-Note: The test uses `OUT` instead of `TMP` for its temp file variable to avoid
+### win32-claude-swarm.sh
+
+Simulates the exact tmux command sequences used by Claude Code agent teams
+(split-pane mode). Tests run across 3 full cycles:
+
+1. Version gate (`tmux -V`)
+2. `has-session` on missing session
+3. Rapid multi-split (4 panes via `split-window`)
+4. Parallel `send-keys` to all panes
+5. `capture-pane` round-trip verification
+6. Pane targeting (`send-keys -t session:0.N`)
+7. `list-panes` format output
+8. Rapid session teardown (`kill-session`)
+9. Multi-session management
+10. Rapid create-destroy cycles (5 iterations)
+
+Note: The tests use `OUT` instead of `TMP` for temp file variables to avoid
 shadowing the Windows `%TMP%` environment variable (which would cause
 `GetTempFileName()` to fail with ACCESS_DENIED in the server process).
 
-## Build System
+## Installation
 
-The project uses CMake with MSVC:
+### Via winget
 
 ```powershell
-cmake -S . -B build -G "Visual Studio 17 2022"
-MSBuild.exe build/tmux.sln -p:Configuration=Release -m
+winget install arndawg.tmux-windows
+```
+
+### Manual
+
+1. Download the latest `tmux-windows-*.zip` from
+   [GitHub Releases](https://github.com/arndawg/tmux-windows/releases)
+2. Extract `tmux.exe` and `event_core.dll` to a folder in your `%PATH%`
+3. Run `tmux new-session`
+
+### Upgrading
+
+Run `tmux kill-server` before upgrading. Windows cannot overwrite a running
+executable, and `winget upgrade` will fail if the server is resident.
+
+With the exit-empty fix, the server auto-exits when all sessions are destroyed,
+so the server is only resident while sessions are active.
+
+## Build System
+
+The project uses CMake with MSVC. Requires [vcpkg](https://vcpkg.io/) for
+libevent:
+
+```powershell
+vcpkg install libevent:x64-windows
+cmake -S . -B build -G "Visual Studio 17 2022" `
+  -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+cmake --build build --config Release
 ```
 
 The resulting `tmux.exe` is in `build/Release/`. For debug builds, use
-`-p:Configuration=Debug` (output in `build/Debug/`). Copy `tmux.exe` and any
-libevent DLLs (e.g., `event_cored.dll` for Debug) to a directory in `%PATH%`.
+`--config Debug` (output in `build/Debug/`). Copy `tmux.exe` and
+`event_core.dll` to a directory in `%PATH%`.
+
+CI builds run automatically on every push via GitHub Actions
+(`.github/workflows/ci.yml`). Tagged releases (`v*`) produce downloadable
+zip artifacts.
+
+## Debugging
+
+Use the `-v` flag for verbose logging. Each `-v` increases the log level:
+
+```bash
+tmux -vvv new-session
+```
+
+This creates timestamped log files in the current directory:
+- `tmux-client-<pid>.log` — client-side timing (connect, identify, attach)
+- `tmux-server-<pid>.log` — server-side timing (socket, auth, ConPTY, events)
+
+Each line has microsecond-precision timestamps (`epoch.usec`) for profiling:
+
+```
+1771885428.291080 client started (43248): version 3.6a-win32, ...
+1771885428.295389 connect failed, starting server
+1771885428.512943 add peer ...: connected
+```
 
 ## Runtime Requirements
 
 - Windows 10 version 1809+ (for ConPTY support)
 - Windows Terminal or a VT-capable console host
-- No external dependencies (ncurses, libevent, and imsg are compiled in)
+- `event_core.dll` (libevent, included in release zip)
+
+## Security
+
+The Windows port uses TCP loopback for IPC instead of Unix domain sockets.
+The following hardening measures are in place:
+
+- **Auth tokens**: Each server generates a 256-bit random token via
+  `RtlGenRandom`, stored in `%LOCALAPPDATA%\tmux\<label>.auth`. Clients
+  must present the token on connect.
+- **File ACLs**: Auth token and port files are created with a DACL restricting
+  access to the current user's SID only (no admin/SYSTEM/other user access).
+- **Constant-time comparison**: Auth token verification uses a timing-safe
+  XOR-accumulator comparison to prevent side-channel attacks.
+- **Auth-before-listen**: The auth token file is created before the server
+  begins accepting connections, closing the race window.
+
+IPC files are stored in `%LOCALAPPDATA%\tmux\`:
+- `<label>.port` — TCP port number
+- `<label>.auth` — 64-character hex auth token
+
+The server cleans up these files on exit. If stale files remain (e.g., after
+a force-kill), the next client automatically cleans them up before launching
+a new server.
 
 ## Known Limitations
 
