@@ -895,7 +895,6 @@ void  win32_launch_server(const char *label);
 int  win32_ipc_create_server(const char *label, uint16_t *port);
 int  win32_ipc_connect(const char *label);
 int  win32_ipc_connect_tty(const char *label, const char *tty_token);
-void win32_ipc_create_auth_token(const char *path);
 int  win32_ipc_verify_auth(int fd, const char *label, char *tty_token_out,
 	 size_t tty_token_size);
 void win32_ipc_cleanup(const char *label);

@@ -337,7 +337,7 @@ server_start(struct tmuxproc *client, uint64_t flags, struct event_base *base,
 	status_prompt_save_history();
 
 #ifdef _WIN32
-	/* Remove IPC files so the next client doesn't hit a stale port. */
+	/* Shut down the discovery pipe and accept thread. */
 	win32_ipc_cleanup(socket_path);
 #endif
 

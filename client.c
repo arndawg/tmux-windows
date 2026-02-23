@@ -121,7 +121,7 @@ static int
 client_connect(struct event_base *base, const char *path, uint64_t flags)
 {
 #ifdef _WIN32
-	int	fd, retries;
+	int	fd;
 
 	log_debug("connecting to server label %s", path);
 
@@ -149,16 +149,17 @@ client_connect(struct event_base *base, const char *path, uint64_t flags)
 		return (fd);
 	}
 
-	/* Remove stale IPC files so retries don't hit old port. */
-	win32_ipc_cleanup(path);
-
-	/* Launch a detached server process and poll-retry connection. */
+	/*
+	 * Launch a detached server process and poll for its named
+	 * pipe to appear. Once the pipe exists, WaitNamedPipe handles
+	 * the "busy" case internally.
+	 */
 	win32_launch_server(path);
 	{
-		DWORD	delay = 10; /* ms, doubles each iteration */
+		int	retries;
 
-		for (retries = 0; retries < 20; retries++) {
-			Sleep(delay);
+		for (retries = 0; retries < 50; retries++) {
+			Sleep(100);
 			fd = win32_ipc_connect(path);
 			if (fd != -1) {
 				log_debug("server connected after %d retries",
@@ -166,8 +167,6 @@ client_connect(struct event_base *base, const char *path, uint64_t flags)
 				setblocking(fd, 0);
 				return (fd);
 			}
-			if (delay < 200)
-				delay *= 2;
 		}
 	}
 
