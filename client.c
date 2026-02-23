@@ -154,12 +154,20 @@ client_connect(struct event_base *base, const char *path, uint64_t flags)
 
 	/* Launch a detached server process and poll-retry connection. */
 	win32_launch_server(path);
-	for (retries = 0; retries < 50; retries++) {
-		Sleep(100);
-		fd = win32_ipc_connect(path);
-		if (fd != -1) {
-			setblocking(fd, 0);
-			return (fd);
+	{
+		DWORD	delay = 10; /* ms, doubles each iteration */
+
+		for (retries = 0; retries < 20; retries++) {
+			Sleep(delay);
+			fd = win32_ipc_connect(path);
+			if (fd != -1) {
+				log_debug("server connected after %d retries",
+				    retries + 1);
+				setblocking(fd, 0);
+				return (fd);
+			}
+			if (delay < 200)
+				delay *= 2;
 		}
 	}
 

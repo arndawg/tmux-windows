@@ -256,6 +256,18 @@ win32_ipc_create_server(const char *label, uint16_t *out_port)
 	if (s == INVALID_SOCKET)
 		return (-1);
 
+	/*
+	 * Allow binding to a port that is in TIME_WAIT from a previous
+	 * server instance.  Without this, the server falls back to an
+	 * OS-assigned port on restart, and the client's first connect
+	 * attempt stalls until the old SYN times out.
+	 */
+	{
+		BOOL one = TRUE;
+		setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const char *)&one,
+		    sizeof one);
+	}
+
 	port = label_to_port(label);
 
 	memset(&addr, 0, sizeof addr);
@@ -342,9 +354,48 @@ win32_ipc_connect(const char *label)
 	addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 	addr.sin_port = htons((uint16_t)port);
 
-	if (connect(s, (struct sockaddr *)&addr, sizeof addr) != 0) {
-		closesocket(s);
-		return (-1);
+	/*
+	 * Use non-blocking connect with a short timeout for localhost.
+	 * A blocking connect() to a port in TIME_WAIT can stall for ~2s
+	 * on Windows while the TCP stack waits for a SYN-ACK that will
+	 * never come.
+	 */
+	{
+		u_long		nb = 1;
+		fd_set		wfds, efds;
+		struct timeval	tv;
+		int		err, errlen = sizeof(err);
+
+		ioctlsocket(s, FIONBIO, &nb);
+
+		if (connect(s, (struct sockaddr *)&addr, sizeof addr) != 0 &&
+		    WSAGetLastError() != WSAEWOULDBLOCK) {
+			closesocket(s);
+			return (-1);
+		}
+
+		FD_ZERO(&wfds);
+		FD_SET(s, &wfds);
+		FD_ZERO(&efds);
+		FD_SET(s, &efds);
+		tv.tv_sec = 0;
+		tv.tv_usec = 150000;	/* 150ms — plenty for loopback */
+
+		if (select(0, NULL, &wfds, &efds, &tv) <= 0 ||
+		    FD_ISSET(s, &efds)) {
+			closesocket(s);
+			return (-1);
+		}
+
+		/* Verify connect succeeded. */
+		if (getsockopt(s, SOL_SOCKET, SO_ERROR, (char *)&err,
+		    &errlen) != 0 || err != 0) {
+			closesocket(s);
+			return (-1);
+		}
+
+		nb = 0;
+		ioctlsocket(s, FIONBIO, &nb);
 	}
 
 	/* Send auth token + newline as a single send to avoid TCP split. */

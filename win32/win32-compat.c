@@ -263,6 +263,16 @@ win32_kill(pid_t pid, int sig)
 	}
 
 	if (sig == SIGTERM || sig == SIGKILL || sig == SIGHUP) {
+		/*
+		 * Self-signal: deliver through the signal pipe so the
+		 * event loop can shut down gracefully (cleanup IPC files,
+		 * flush clients, etc.).  TerminateProcess would kill us
+		 * instantly with no cleanup.
+		 */
+		if (pid == (pid_t)GetCurrentProcessId() && sig != SIGKILL) {
+			win32_signal_notify(sig);
+			return (0);
+		}
 		h = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
 		if (h == NULL) {
 			errno = EPERM;
