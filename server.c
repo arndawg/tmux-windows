@@ -62,9 +62,13 @@ static struct event	 server_ev_tidy;
  * When a TTY channel connection arrives in server_accept(), we store it
  * here until the client sends MSG_IDENTIFY_TTYTOKEN to claim it.
  */
+#define MAX_PENDING_TTYS    16
+#define PENDING_TTY_EXPIRY  30  /* seconds */
+
 struct pending_tty {
 	char			 token[65];
 	int			 fd;
+	time_t			 created;
 	TAILQ_ENTRY(pending_tty) entry;
 };
 static TAILQ_HEAD(, pending_tty) pending_ttys =
@@ -73,11 +77,35 @@ static TAILQ_HEAD(, pending_tty) pending_ttys =
 void
 server_add_pending_tty(const char *token, int fd)
 {
-	struct pending_tty	*pt;
+	struct pending_tty	*pt, *pt_next;
+	time_t			 now;
+	u_int			 count = 0;
+
+	now = time(NULL);
+
+	/* Expire stale entries. */
+	TAILQ_FOREACH_SAFE(pt, &pending_ttys, entry, pt_next) {
+		if (now - pt->created >= PENDING_TTY_EXPIRY) {
+			log_debug("expiring pending tty: token=%s fd=%d",
+			    pt->token, pt->fd);
+			close(pt->fd);
+			TAILQ_REMOVE(&pending_ttys, pt, entry);
+			free(pt);
+		} else
+			count++;
+	}
+
+	/* Enforce cap. */
+	if (count >= MAX_PENDING_TTYS) {
+		log_debug("pending tty queue full, rejecting fd=%d", fd);
+		close(fd);
+		return;
+	}
 
 	pt = xcalloc(1, sizeof *pt);
 	strlcpy(pt->token, token, sizeof pt->token);
 	pt->fd = fd;
+	pt->created = now;
 	TAILQ_INSERT_TAIL(&pending_ttys, pt, entry);
 	log_debug("added pending tty: token=%s fd=%d", token, fd);
 }

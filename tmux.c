@@ -230,6 +230,21 @@ make_label(const char *label, char **cause)
 	if (label == NULL)
 		label = "default";
 
+	/* Reject labels with characters unsafe for pipe names / command lines. */
+	{
+		const char *p;
+		for (p = label; *p != '\0'; p++) {
+			if (!(*p >= 'A' && *p <= 'Z') &&
+			    !(*p >= 'a' && *p <= 'z') &&
+			    !(*p >= '0' && *p <= '9') &&
+			    *p != '.' && *p != '_' && *p != '-') {
+				xasprintf(cause, "bad label character '%c'"
+				    " (allowed: A-Z a-z 0-9 . _ -)", *p);
+				return (NULL);
+			}
+		}
+	}
+
 	appdata = getenv("LOCALAPPDATA");
 	if (appdata == NULL)
 		appdata = getenv("APPDATA");
