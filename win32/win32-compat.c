@@ -714,16 +714,97 @@ tparm(const char *str, ...)
 			}
 			break;
 
+		case '<':
+			/* Pop two, push (second < first). */
+			if (sp >= 2) {
+				sp--;
+				stack[sp - 1] =
+				    (stack[sp - 1] < stack[sp]) ? 1 : 0;
+			}
+			break;
+
+		case '>':
+			/* Pop two, push (second > first). */
+			if (sp >= 2) {
+				sp--;
+				stack[sp - 1] =
+				    (stack[sp - 1] > stack[sp]) ? 1 : 0;
+			}
+			break;
+
+		case '=':
+			/* Pop two, push (second == first). */
+			if (sp >= 2) {
+				sp--;
+				stack[sp - 1] =
+				    (stack[sp - 1] == stack[sp]) ? 1 : 0;
+			}
+			break;
+
+		case '!':
+			/* Pop one, push logical NOT. */
+			if (sp >= 1)
+				stack[sp - 1] = !stack[sp - 1];
+			break;
+
 		case '?':
-		case 't':
-		case 'e':
-		case ';':
+			/* Start conditional — no-op, processing continues. */
+			break;
+
+		case 't': {
 			/*
-			 * Conditional operations (%? %t %e %;).
-			 * For simplicity, skip these -- the most common
-			 * terminfo strings used by tmux don't rely on
-			 * conditionals.
+			 * "Then": pop the stack. If false (zero), skip
+			 * ahead to the matching %e or %;.
 			 */
+			int cond = 0;
+			if (sp > 0)
+				cond = (int)stack[--sp];
+			if (!cond) {
+				int depth = 0;
+				while (*++p != '\0') {
+					if (*p != '%')
+						continue;
+					p++;
+					if (*p == '?')
+						depth++;
+					else if (*p == ';') {
+						if (depth == 0)
+							break;
+						depth--;
+					} else if (*p == 'e' && depth == 0)
+						break;
+				}
+				if (*p == '\0')
+					p--;
+			}
+			break;
+		}
+
+		case 'e': {
+			/*
+			 * "Else": the "then" branch was taken (otherwise
+			 * we'd have skipped to here), so skip to %;.
+			 */
+			int depth = 0;
+			while (*++p != '\0') {
+				if (*p != '%')
+					continue;
+				p++;
+				if (*p == '?')
+					depth++;
+				else if (*p == ';') {
+					if (depth == 0)
+						break;
+					depth--;
+				}
+			}
+			if (*p == '\0')
+				p--;
+			break;
+		}
+
+		case ';':
+			/* End conditional — no-op. */
 			break;
 
 		default:

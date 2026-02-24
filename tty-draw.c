@@ -115,7 +115,9 @@ tty_draw_line(struct tty *tty, struct screen *s, u_int px, u_int py, u_int nx,
 	struct grid		*gd = s->grid;
 	const struct grid_cell	*gcp;
 	struct grid_cell	 gc, ngc, last;
+#ifndef _WIN32
 	struct grid_line	*gl;
+#endif
 	u_int			 i, j, last_i, cx, ex, width;
 	u_int			 cellsize, bg;
 	int			 flags, empty, wrapped = 0;
@@ -190,11 +192,14 @@ tty_draw_line(struct tty *tty, struct screen *s, u_int px, u_int py, u_int nx,
 	}
 
 	/* Did the previous line wrap on to this one? */
-	if (py != 0 && atx == 0 && tty->cx >= tty->sx && nx == tty->sx) {
+#ifndef _WIN32
+	if (py != 0 && atx == 0 && tty->cx != UINT_MAX &&
+	    tty->cx >= tty->sx && nx == tty->sx) {
 		gl = grid_get_line(gd, gd->hsize + py - 1);
 		if (gl->flags & GRID_LINE_WRAPPED)
 			wrapped = 1;
 	}
+#endif
 
 	/* Turn off cursor while redrawing and reset region and margins. */
 	flags = (tty->flags & TTY_NOCURSOR);
