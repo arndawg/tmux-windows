@@ -47,6 +47,54 @@ CI runs 8 test scripts from `regress/`:
 - `win32-layout.sh` — pane dimension verification (7 tests)
 - `win32-control-client.sh` — complex pane operations (6 tests)
 
+## Winget Package Submission
+
+Package: `arndawg.tmux-windows` in `microsoft/winget-pkgs`.
+
+### How to submit a new version
+
+1. **Sync the fork** before anything else:
+   ```bash
+   gh api repos/arndawg/winget-pkgs/merge-upstream -X POST -f branch=master
+   ```
+
+2. **Create a branch** from the synced master:
+   ```bash
+   MASTER_SHA=$(gh api repos/arndawg/winget-pkgs/git/refs/heads/master --jq '.object.sha')
+   gh api repos/arndawg/winget-pkgs/git/refs -X POST \
+     -f ref=refs/heads/arndawg.tmux-windows-VERSION \
+     -f sha="$MASTER_SHA"
+   ```
+
+3. **Create files via the contents API** (one PUT per file). Do NOT use the git trees API — on a repo this large it produces phantom diffs with hundreds of unrelated files. The contents API creates clean per-file commits:
+   ```bash
+   CONTENT=$(printf '%s' "$YAML" | base64 -w0)
+   gh api repos/arndawg/winget-pkgs/contents/manifests/a/arndawg/tmux-windows/VERSION/FILENAME \
+     -X PUT -f message="Add manifest" -f content="$CONTENT" \
+     -f branch=arndawg.tmux-windows-VERSION
+   ```
+   Three files needed: `arndawg.tmux-windows.installer.yaml`, `arndawg.tmux-windows.locale.en-US.yaml`, `arndawg.tmux-windows.yaml`.
+
+4. **Verify** the branch diff before creating the PR:
+   ```bash
+   gh api repos/arndawg/winget-pkgs/compare/master...arndawg.tmux-windows-VERSION \
+     --jq '{ahead_by: .ahead_by, files: [.files[].filename]}'
+   ```
+   Must show exactly 3 files and 3 commits ahead.
+
+5. **Create the PR** with `gh pr create --repo microsoft/winget-pkgs`.
+
+6. **Validation takes up to 3 hours.** Monitor with:
+   ```bash
+   gh pr view PRNUM --repo microsoft/winget-pkgs --json labels,comments \
+     --jq '{labels: [.labels[].name], latest: .comments[-1].body[:200]}'
+   ```
+   Look for the `Validation-Completed` label. The Azure DevOps pipeline comment has a badge link.
+
+### Manifest template reference
+
+Copy from the previous version directory in `manifests/a/arndawg/tmux-windows/` — update `PackageVersion`, `InstallerUrl`, `InstallerSha256`, `ReleaseDate`, `ReleaseNotes`, and `ReleaseNotesUrl`.
+
 ## Architecture Notes
 
 - IPC uses named pipes for discovery + TCP for data (libevent needs sockets)

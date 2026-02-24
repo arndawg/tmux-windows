@@ -2,11 +2,6 @@
 
 ## Open Work
 
-### Release
-
-- [ ] **Winget v3.6a-win32.3 PR** — Submit to `microsoft/winget-pkgs` with
-  updated hash + version (named pipe IPC overhaul + 6 new regression tests)
-
 ### Claude Code Integration
 
 - [ ] **Fix the Claude Code isTTY gate** — Split-pane mode is blocked on
@@ -19,11 +14,6 @@
   set `teammateMode: "tmux"`, and the known isTTY workaround.
 
 ### Performance
-
-- [ ] **Reduce TTY channel overhead** — The second pipe handshake + TCP
-  connection for TTY I/O (`win32_ipc_connect_tty`) adds ~50-100ms during
-  interactive attach. Could potentially be pipelined with the identify
-  handshake.
 
 - [ ] **ConPTY I/O benchmarking** — Compare ConPTY latency vs Unix PTY to
   identify bottlenecks that could affect swarm responsiveness.
@@ -56,7 +46,7 @@ and targeted fixes resolved #9 and #10.
 
 ## Completed Milestones
 
-### Release Pipeline (v3.5a-win32 → v3.6a-win32.3)
+### Release Pipeline (v3.5a-win32 → v3.6a-win32.4)
 
 - **CI** — GitHub Actions builds Debug + Release with MSVC, runs 8 regression
   test scripts on every push. vcpkg packages cached.
@@ -65,9 +55,27 @@ and targeted fixes resolved #9 and #10.
 - **Winget** — Published as `arndawg.tmux-windows`. PRs merged for v3.5a-win32
   ([#341456](https://github.com/microsoft/winget-pkgs/pull/341456)),
   v3.6a-win32 ([#341769](https://github.com/microsoft/winget-pkgs/pull/341769)),
-  v3.6a-win32.1 ([#341850](https://github.com/microsoft/winget-pkgs/pull/341850)).
+  v3.6a-win32.1 ([#341850](https://github.com/microsoft/winget-pkgs/pull/341850)),
+  v3.6a-win32.3 ([#341919](https://github.com/microsoft/winget-pkgs/pull/341919)),
+  v3.6a-win32.4 ([#341990](https://github.com/microsoft/winget-pkgs/pull/341990)).
   v3.6a-win32.2 skipped (went to .3).
 - **Repo** — Published at https://github.com/arndawg/tmux-windows.
+
+### TTY Race Condition Fix & Security Hardening (v3.6a-win32.4)
+
+Fixed startup race where the TTY channel's second named-pipe round-trip
+delayed `accept()` past `MSG_IDENTIFY_DONE`, causing "open terminal failed"
+or blank screens. Three-part fix: early TTY connection (client-side),
+deferred cmdq processing with blocking callback + 2s timeout (server-side),
+and terminal dimension preservation across `tty_init()` memset for late
+arrivals. Also added IPC label sanitization and truecolor-by-default.
+
+### Regression Test Expansion (v3.6a-win32.3)
+
+Expanded from 2 test scripts (18 assertions) to 8 scripts (230+ assertions):
+`win32-basic.sh`, `win32-claude-swarm.sh`, `win32-format-strings.sh`,
+`win32-conf-syntax.sh`, `win32-keys.sh`, `win32-has-session.sh`,
+`win32-layout.sh`, `win32-control-client.sh`.
 
 ### Named Pipe IPC Overhaul (v3.6a-win32.2)
 
@@ -76,13 +84,6 @@ Replaced TCP auth token file system with named pipe discovery. Server creates
 ephemeral nonce + TCP port via pipe, authenticate over TCP. Eliminated `.auth`
 and `.port` files, exponential backoff retry, and 7 security audit findings.
 Cold start improved from 2.3s → ~250ms.
-
-### Regression Test Expansion (v3.6a-win32.3)
-
-Expanded from 2 test scripts (18 assertions) to 8 scripts (230+ assertions):
-`win32-basic.sh`, `win32-claude-swarm.sh`, `win32-format-strings.sh`,
-`win32-conf-syntax.sh`, `win32-keys.sh`, `win32-has-session.sh`,
-`win32-layout.sh`, `win32-control-client.sh`.
 
 ### Server Exit Fix
 
