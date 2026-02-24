@@ -1989,6 +1989,10 @@ struct client {
 
 	char			*ttyname;
 	char			*tty_token;
+#ifdef _WIN32
+	struct event		 tty_wait_timer;
+	struct cmdq_item	*tty_wait_item;
+#endif
 	struct tty		 tty;
 
 	size_t			 written;

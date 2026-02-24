@@ -94,6 +94,37 @@ server_client_how_many(void)
 	return (n);
 }
 
+#ifdef _WIN32
+/* Cmdq callback that blocks until tty_token is consumed. */
+static enum cmd_retval
+server_client_tty_wait_cb(__unused struct cmdq_item *item, __unused void *data)
+{
+	struct client	*c = cmdq_get_client(item);
+
+	if (c->tty_token != NULL)
+		return (CMD_RETURN_WAIT);
+	return (CMD_RETURN_NORMAL);
+}
+
+/* Safety-net timeout: give up waiting for the TTY channel. */
+static void
+server_client_tty_wait_timeout(__unused int fd, __unused short events,
+    void *data)
+{
+	struct client	*c = data;
+
+	log_debug("client %p tty wait timeout", c);
+
+	free(c->tty_token);
+	c->tty_token = NULL;
+
+	if (c->tty_wait_item != NULL) {
+		cmdq_continue(c->tty_wait_item);
+		c->tty_wait_item = NULL;
+	}
+}
+#endif
+
 /* Overlay timer callback. */
 static void
 server_client_overlay_timer(__unused int fd, __unused short events, void *data)
@@ -489,6 +520,10 @@ server_client_lost(struct client *c)
 		tty_free(&c->tty);
 	free(c->ttyname);
 	free(c->tty_token);
+#ifdef _WIN32
+	if (event_initialized(&c->tty_wait_timer))
+		evtimer_del(&c->tty_wait_timer);
+#endif
 	free(c->clipboard_panes);
 
 	free(c->term_name);
@@ -3808,7 +3843,9 @@ server_client_dispatch_identify(struct client *c, struct imsg *imsg)
 #ifdef _WIN32
 	/*
 	 * On Windows, tty I/O uses a separate TCP connection (tty channel).
-	 * If we haven't matched it yet, do a final check of the pending list.
+	 * If we haven't matched it yet, check the pending list. If still not
+	 * found, defer command processing via a blocking cmdq callback so the
+	 * TTY channel can arrive on the next event-loop iteration.
 	 */
 	if (c->fd == -1 && c->tty_token != NULL) {
 		int tty_fd = server_get_pending_tty(c->tty_token);
@@ -3816,11 +3853,19 @@ server_client_dispatch_identify(struct client *c, struct imsg *imsg)
 			c->fd = tty_fd;
 			log_debug("client %p late-matched tty fd %d",
 			    c, tty_fd);
+			free(c->tty_token);
+			c->tty_token = NULL;
 		} else {
-			log_debug("client %p no tty channel found", c);
+			struct timeval	tv = { .tv_sec = 2 };
+
+			log_debug("client %p deferring for tty channel", c);
+			c->tty_wait_item = cmdq_get_callback(
+			    server_client_tty_wait_cb, NULL);
+			cmdq_append(c, c->tty_wait_item);
+			evtimer_set(&c->tty_wait_timer,
+			    server_client_tty_wait_timeout, c);
+			evtimer_add(&c->tty_wait_timer, &tv);
 		}
-		free(c->tty_token);
-		c->tty_token = NULL;
 	}
 #endif
 

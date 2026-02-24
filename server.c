@@ -542,6 +542,32 @@ server_accept(int fd, short events, __unused void *data)
 					    "client %p", newfd, tc);
 					free(tc->tty_token);
 					tc->tty_token = NULL;
+					if ((tc->flags & CLIENT_IDENTIFIED) &&
+					    !(tc->flags &
+					    (CLIENT_TERMINAL|CLIENT_CONTROL))) {
+						u_int sx = tc->tty.sx;
+						u_int sy = tc->tty.sy;
+						if (tty_init(&tc->tty, tc) == 0) {
+							if (sx == 0)
+								sx = 80;
+							if (sy == 0)
+								sy = 24;
+							tty_set_size(&tc->tty,
+							    sx, sy, 0, 0);
+							tc->flags |= CLIENT_TERMINAL;
+							recalculate_sizes();
+							server_redraw_client(tc);
+						}
+						if (event_initialized(
+						    &tc->tty_wait_timer))
+							evtimer_del(
+							    &tc->tty_wait_timer);
+						if (tc->tty_wait_item != NULL) {
+							cmdq_continue(
+							    tc->tty_wait_item);
+							tc->tty_wait_item = NULL;
+						}
+					}
 					server_add_accept(0);
 					return;
 				}

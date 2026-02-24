@@ -543,6 +543,23 @@ client_send_identify(const char *ttynam, const char *termname, char **caps,
 	uint64_t  flags = client_flags;
 	pid_t	  pid;
 	u_int	  i;
+#ifdef _WIN32
+	char	  tty_token[65] = "";
+#endif
+
+#ifdef _WIN32
+	/*
+	 * Connect TTY channel early (before sending identify messages) to
+	 * give the server maximum time to accept() it. The named pipe has
+	 * nMaxInstances=1, so this second connection must wait for the pipe
+	 * thread's disconnect/reconnect cycle — doing it first minimizes the
+	 * chance the server processes MSG_IDENTIFY_DONE before accepting the
+	 * TTY channel.
+	 */
+	win32_generate_tty_token(tty_token, sizeof tty_token);
+	if (tty_token[0] != '\0')
+		client_tty_fd = win32_ipc_connect_tty(socket_path, tty_token);
+#endif
 
 	proc_send(client_peer, MSG_IDENTIFY_LONGFLAGS, -1, &flags, sizeof flags);
 	proc_send(client_peer, MSG_IDENTIFY_LONGFLAGS, -1, &client_flags,
@@ -562,23 +579,11 @@ client_send_identify(const char *ttynam, const char *termname, char **caps,
 	}
 
 #ifdef _WIN32
-	/* On Windows, we can't pass FDs over the socket. Instead, open a
-	 * separate TCP connection for tty I/O and send a correlation token. */
 	proc_send(client_peer, MSG_IDENTIFY_STDIN, -1, NULL, 0);
 	proc_send(client_peer, MSG_IDENTIFY_STDOUT, -1, NULL, 0);
-	{
-		char tty_token[65];
-
-		win32_generate_tty_token(tty_token, sizeof tty_token);
-		if (tty_token[0] != '\0') {
-			client_tty_fd = win32_ipc_connect_tty(
-			    socket_path, tty_token);
-			if (client_tty_fd != -1) {
-				proc_send(client_peer,
-				    MSG_IDENTIFY_TTYTOKEN, -1,
-				    tty_token, strlen(tty_token) + 1);
-			}
-		}
+	if (client_tty_fd != -1) {
+		proc_send(client_peer, MSG_IDENTIFY_TTYTOKEN, -1,
+		    tty_token, strlen(tty_token) + 1);
 	}
 #else
 	if ((fd = dup(STDIN_FILENO)) == -1)
