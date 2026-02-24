@@ -30,15 +30,13 @@
 
 ### Security (open findings from 2026-02-22 audit)
 
-5 of 13 findings remain open after the named pipe IPC overhaul resolved the
-rest by eliminating auth token files entirely.
+3 of 13 findings remain open after the named pipe IPC overhaul resolved 8
+and targeted fixes resolved #9 and #10.
 
 | # | Severity | Finding | Notes |
 |---|----------|---------|-------|
 | 3 | Critical | `getpeereid()` stub returns uid=0 always | Structural, affects Unix compat layer |
 | 7 | High | Socketpair TOCTOU race allows hijacking signal/PTY pipes | `win32-compat.c` pipe creation race |
-| 9 | Medium | Unbounded pending TTY queue — DoS vector | Nonce list capped at 16, but TTY queue in `server.c` unbounded |
-| 10 | Medium | Potential command injection in label embedding | `win32-process.c` label embedding |
 | 11 | Medium | ConPTY bridge sockets inherit socketpair race | Inherits #7 |
 
 ### Nice to Have

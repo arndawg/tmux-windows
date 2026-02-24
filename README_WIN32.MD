@@ -123,12 +123,12 @@ cross-platform differences are handled automatically:
 |------|---------|
 | `spawn.c` | ConPTY spawn path; `environ_to_win32_block()` for Unicode env blocks; cmd.exe invocation |
 | `compat/imsg-buffer.c` | `WSAGetLastError()` for Winsock non-blocking errors; Windows sendmsg/recvmsg |
-| `tmux.c` | Shell detection (COMSPEC), label paths, `/dev/null` → `NUL` for `-f`, `-S` path sanitization, `checkshell()` Unix path guard |
+| `tmux.c` | Shell detection (COMSPEC), label paths + validation, `/dev/null` → `NUL` for `-f`, `-S` path sanitization, `checkshell()` Unix path guard |
 | `job.c` | ConPTY for PTY jobs; `win32_process_spawn()` for non-PTY jobs; no fork/setsid |
 | `proc.c` | Signal pipe integration; `proc_fork_and_daemon()` via CreateProcess; closesocket |
 | `client.c` | TCP IPC connection with poll-retry; `win32_launch_server()` fallback; tty channel with token auth; client-driven resize via `MSG_RESIZE` |
 | `input.c` | Conditional includes; input handling adjustments |
-| `server.c` | `win32_ipc_create_server()`; label-based identification; nonce verification; tty channel correlation |
+| `server.c` | `win32_ipc_create_server()`; label-based identification; nonce verification; tty channel correlation; bounded pending TTY queue |
 | `server-client.c` | IPC client handling; `MSG_RESIZE` with `msg_resize_data` payload; `MSG_IDENTIFY_TTYTOKEN` |
 | `tty.c` | `send()` instead of `write()` for tty_raw on Winsock sockets; `CLIENT_DEAD` guard; `tty_resize()` no-op on Windows |
 | `server-fn.c` | ConPTY cleanup via `win32_pty_close()` in `server_destroy_pane()` |
@@ -299,6 +299,12 @@ path. The following hardening measures are in place:
 - **Ephemeral nonces**: When a client connects to the pipe, the server
   generates a one-time nonce via `RtlGenRandom` and sends it along with the
   TCP port. The nonce expires after 30 seconds and is single-use.
+- **Label validation**: Labels (`-L` / `-S` flags) are restricted to
+  `[A-Za-z0-9._-]`, preventing command injection via `CreateProcessA` in
+  the server launch path.
+- **Bounded TTY queue**: Pending TTY channel connections are capped at 16
+  entries with a 30-second expiry, preventing resource exhaustion from
+  unclaimed connections.
 - **No persistent secrets**: There are no auth files, port files, or tokens
   stored on disk. All authentication state is in-memory and ephemeral.
 - **Pipe-before-listen**: The named pipe is created before the TCP listener
