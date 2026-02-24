@@ -58,6 +58,16 @@ file_get_path(struct client *c, const char *file)
 	}
 	if (*path == '/')
 		return (path);
+#ifdef _WIN32
+	/* Detect Windows drive letter paths, including MSYS2-escaped C\: */
+	if (*path != '\0' && (path[1] == ':' ||
+	    (path[1] == '\\' && path[2] == ':'))) {
+		/* Strip MSYS2 backslash-escape: C\:/foo -> C:/foo */
+		if (path[1] == '\\' && path[2] == ':')
+			memmove(path + 1, path + 2, strlen(path + 2) + 1);
+		return (path);
+	}
+#endif
 	xasprintf(&full_path, "%s/%s", server_client_get_cwd(c, NULL), path);
 	return (full_path);
 }

@@ -219,12 +219,20 @@ cmd_source_file_exec(struct cmd *self, struct cmdq_item *item)
 
 		if (*path == '/'
 #ifdef _WIN32
-		    || (*path != '\0' && path[1] == ':')
+		    || (*path != '\0' && (path[1] == ':' ||
+		        (path[1] == '\\' && path[2] == ':')))
 #endif
 		    )
 			pattern = xstrdup(path);
 		else
 			xasprintf(&pattern, "%s/%s", cwd, path);
+#ifdef _WIN32
+		/* Strip MSYS2 backslash-escape: C\:/foo -> C:/foo */
+		if (pattern[0] != '\0' && pattern[1] == '\\' &&
+		    pattern[2] == ':')
+			memmove(pattern + 1, pattern + 2,
+			    strlen(pattern + 2) + 1);
+#endif
 		log_debug("%s: %s", __func__, pattern);
 
 #ifdef _WIN32

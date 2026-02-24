@@ -59,6 +59,49 @@ jobs:
         run: |
           TEST_TMUX=./build/Debug/tmux.exe bash regress/win32-claude-swarm.sh
 
+      - name: Run format string tests
+        shell: bash
+        run: |
+          taskkill //F //IM tmux.exe 2>/dev/null || true
+          sleep 2
+          TEST_TMUX=./build/Debug/tmux.exe bash regress/win32-format-strings.sh
+
+      - name: Run config syntax tests
+        shell: bash
+        run: |
+          taskkill //F //IM tmux.exe 2>/dev/null || true
+          sleep 2
+          TEST_TMUX=./build/Debug/tmux.exe bash regress/win32-conf-syntax.sh
+
+      - name: Run key handling tests
+        shell: bash
+        timeout-minutes: 5
+        run: |
+          taskkill //F //IM tmux.exe 2>/dev/null || true
+          sleep 2
+          TEST_TMUX=./build/Debug/tmux.exe bash regress/win32-keys.sh
+
+      - name: Run has-session tests
+        shell: bash
+        run: |
+          taskkill //F //IM tmux.exe 2>/dev/null || true
+          sleep 2
+          TEST_TMUX=./build/Debug/tmux.exe bash regress/win32-has-session.sh
+
+      - name: Run layout tests
+        shell: bash
+        run: |
+          taskkill //F //IM tmux.exe 2>/dev/null || true
+          sleep 2
+          TEST_TMUX=./build/Debug/tmux.exe bash regress/win32-layout.sh
+
+      - name: Run control client tests
+        shell: bash
+        run: |
+          taskkill //F //IM tmux.exe 2>/dev/null || true
+          sleep 2
+          TEST_TMUX=./build/Debug/tmux.exe bash regress/win32-control-client.sh
+
       - name: Upload build artifacts
         if: success()
         uses: actions/upload-artifact@v4
