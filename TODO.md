@@ -61,6 +61,16 @@ and targeted fixes resolved #9 and #10.
   v3.6a-win32.2 skipped (went to .3).
 - **Repo** — Published at https://github.com/arndawg/tmux-windows.
 
+### Terminal Rendering Fixes (post v3.6a-win32.4)
+
+Implemented tparm() conditional and comparison operators (`%?`, `%t`, `%e`,
+`%;`, `%<`, `%>`, `%=`, `%!`) in `win32-compat.c`, fixing garbled color
+output from setab/setaf terminfo strings. Status bar now renders with the
+default green background. Also disabled the wrapped-line cursor optimization
+on Windows in `tty-draw.c` — ConPTY's xenl (delayed wrap) behavior differs
+from Unix terminals, causing status bar misalignment after reattach when the
+pane contained long lines that wrapped past the terminal width.
+
 ### TTY Race Condition Fix & Security Hardening (v3.6a-win32.4)
 
 Fixed startup race where the TTY channel's second named-pipe round-trip

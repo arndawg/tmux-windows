@@ -105,7 +105,7 @@ cross-platform differences are handled automatically:
 | File | Lines | Purpose |
 |------|------:|---------|
 | `win32-platform.h` | 1,081 | POSIX type mappings, constants, signal stubs, struct termios/winsize, function declarations |
-| `win32-compat.c` | 730 | POSIX shims: flock, clock_gettime, socketpair, waitpid, kill, wcwidth, fnmatch, tparm, etc. |
+| `win32-compat.c` | 821 | POSIX shims: flock, clock_gettime, socketpair, waitpid, kill, wcwidth, fnmatch, tparm (with full conditional support), etc. |
 | `win32-ipc.c` | 462 | Named pipe discovery + nonce auth replacing Unix domain sockets, with TCP data path and tty channel support |
 | `win32-regex.c` | 429 | Simple POSIX ERE regex engine (character classes, quantifiers, anchors, alternation) |
 | `win32-regex.h` | 51 | POSIX regex interface header |
