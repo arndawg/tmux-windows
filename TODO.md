@@ -1,247 +1,98 @@
-# tmux-windows Release Pipeline
+# tmux-windows TODO
 
-## Stage 1: GitHub Actions CI (build + test on every push) — DONE
+## Open Work
 
-- [x] Create `.github/workflows/ci.yml`
-- [x] Install libevent via vcpkg on `windows-latest` runner
-- [x] Build Debug + Release with CMake + MSVC
-- [x] Run `regress/win32-basic.sh` via Git Bash
-- [x] Run `regress/win32-claude-swarm.sh` via Git Bash
-- [x] Cache vcpkg packages for faster CI runs
+### Release
 
-Note: WinFlexBison not needed — pre-generated `cmd-parse.c` is committed.
+- [ ] **Winget v3.6a-win32.3 PR** — Submit to `microsoft/winget-pkgs` with
+  updated hash + version (named pipe IPC overhaul + 6 new regression tests)
 
-## Stage 2: GitHub Release on tag push — DONE
+### Claude Code Integration
 
-- [x] Add release job to CI workflow (triggered on `v*` tags)
-- [x] Build Release configuration
-- [x] Zip `tmux.exe` + `event_core.dll` into `tmux-windows-<version>.zip`
-- [x] Generate SHA256 hash of the zip
-- [x] Create GitHub Release with zip + hash as assets
-- [x] Include brief install instructions in release notes
+- [ ] **Fix the Claude Code isTTY gate** — Split-pane mode is blocked on
+  Windows due to a `process.stdout.isTTY` gate in Claude Code's Bun SFE binary
+  ([#26244](https://github.com/anthropics/claude-code/issues/26244)). This is
+  a Claude Code bug, not a tmux bug, but it's the #1 blocker.
 
-First release: https://github.com/arndawg/tmux-windows/releases/tag/v3.5a-win32
+- [ ] **Claude Code user documentation** — Add a "Using with Claude Code Agent
+  Teams" section to `README_WIN32.MD` with setup instructions: install tmux,
+  set `teammateMode: "tmux"`, and the known isTTY workaround.
 
-## Stage 3: Winget manifest — DONE (pending merge)
+### Performance
 
-- [x] Create winget manifest YAML (`arndawg.tmux-windows`)
-- [x] Use `portable` installer type (same as fzf, ripgrep)
-- [x] Point `InstallerUrl` at GitHub Release asset
-- [x] Include SHA256 hash
-- [x] Set `Commands: [tmux]` so winget creates the symlink
-- [x] Submit PR to `microsoft/winget-pkgs`
-- [x] Validation pipeline passed, labeled `Azure-Pipeline-Passed`
-- [ ] **Check back**: Wait for Microsoft reviewer to approve and merge
-  - PR: https://github.com/microsoft/winget-pkgs/pull/341456
-  - Typical turnaround: 1-3 days
-  - After merge, verify: `winget install arndawg.tmux-windows`
+- [ ] **Reduce TTY channel overhead** — The second pipe handshake + TCP
+  connection for TTY I/O (`win32_ipc_connect_tty`) adds ~50-100ms during
+  interactive attach. Could potentially be pipelined with the identify
+  handshake.
 
-## Winget v3.6a-win32 PR
+- [ ] **ConPTY I/O benchmarking** — Compare ConPTY latency vs Unix PTY to
+  identify bottlenecks that could affect swarm responsiveness.
 
-- PR: https://github.com/microsoft/winget-pkgs/pull/341769
-- Includes security fixes (auth race, DACL, constant-time compare) + version bump
-- Waiting for Microsoft review
+### Security (open findings from 2026-02-22 audit)
 
-## Winget v3.6a-win32.1 PR
+5 of 13 findings remain open after the named pipe IPC overhaul resolved the
+rest by eliminating auth token files entirely.
 
-- PR: https://github.com/microsoft/winget-pkgs/pull/341850
-- Includes server exit fix
-- Waiting for Microsoft review
+| # | Severity | Finding | Notes |
+|---|----------|---------|-------|
+| 3 | Critical | `getpeereid()` stub returns uid=0 always | Structural, affects Unix compat layer |
+| 7 | High | Socketpair TOCTOU race allows hijacking signal/PTY pipes | `win32-compat.c` pipe creation race |
+| 9 | Medium | Unbounded pending TTY queue — DoS vector | Nonce list capped at 16, but TTY queue in `server.c` unbounded |
+| 10 | Medium | Potential command injection in label embedding | `win32-process.c` label embedding |
+| 11 | Medium | ConPTY bridge sockets inherit socketpair race | Inherits #7 |
 
-## Winget v3.6a-win32.2
+### Nice to Have
 
-- [ ] Submit PR to `microsoft/winget-pkgs` with updated hash + version
-- [ ] Waiting for Microsoft review
+- [ ] **Windows Terminal integration** —
+  [#24384](https://github.com/anthropics/claude-code/issues/24384) proposes
+  `wt.exe split-pane` as a native alternative. If Claude Code adds that
+  backend, tmux won't be needed on Windows.
 
-## Server Exit Fix (2026-02-23)
+- [ ] **Upstream contribution** — Submit the port (or parts of it) to
+  `tmux/tmux`. Even if not merged, the discussion increases visibility.
 
-- [x] Root cause: Windows always uses `-D` (no fork), which sets `CLIENT_NOFORK`,
-  which disables `exit-empty` — server never exits after last session destroyed
-- [x] Fix: `#ifndef _WIN32` guard around exit-empty=0 in `server.c:308`
-- [x] Both regression suites pass
-- [x] Manual test confirms server exits cleanly after `kill-session`
-- [x] Committed and pushed (54505353)
-
-## Upgrade Process
-
-When `winget upgrade` replaces `tmux.exe`, any resident server process will hold a
-file lock on the old binary. Windows cannot overwrite a running executable.
-
-**Workaround**: Run `tmux kill-server` before upgrading. This is the same pattern
-used by other server-mode CLI tools on Windows.
-
-With the server exit fix above, the server now auto-exits when all sessions are
-destroyed, so the "stuck resident server" scenario should be much less common.
-
-## Target User Experience
-
-```powershell
-# After winget merge:
-winget install arndawg.tmux-windows
-
-# Current (Stage 2):
-# Download tmux-windows-v3.5a-win32.zip from GitHub Releases
-# Extract to a folder in %PATH%
-# Run: tmux new-session
-```
+- [ ] **PowerShell tab completion** — tmux has bash completion; add
+  PowerShell completion for Windows-native shell users.
 
 ---
 
-## Named Pipe IPC Overhaul (2026-02-23) — DONE
+## Completed Milestones
 
-Replaced the TCP auth token file system with Windows Named Pipe discovery.
-Released as v3.6a-win32.2.
+### Release Pipeline (v3.5a-win32 → v3.6a-win32.3)
 
-### Architecture
+- **CI** — GitHub Actions builds Debug + Release with MSVC, runs 8 regression
+  test scripts on every push. vcpkg packages cached.
+- **GitHub Releases** — Tagged releases (`v*`) produce downloadable zips with
+  `tmux.exe` + `event_core.dll` + SHA256 hash.
+- **Winget** — Published as `arndawg.tmux-windows`. PRs merged for v3.5a-win32
+  ([#341456](https://github.com/microsoft/winget-pkgs/pull/341456)),
+  v3.6a-win32 ([#341769](https://github.com/microsoft/winget-pkgs/pull/341769)),
+  v3.6a-win32.1 ([#341850](https://github.com/microsoft/winget-pkgs/pull/341850)).
+  v3.6a-win32.2 skipped (went to .3).
+- **Repo** — Published at https://github.com/arndawg/tmux-windows.
 
-Server creates `\\.\pipe\tmux-<user>-<label>` with kernel-enforced DACL (current user
-only). Clients connect to the pipe, receive a one-time nonce + TCP port, then
-authenticate over TCP with the nonce. Data path stays on TCP for libevent compatibility.
+### Named Pipe IPC Overhaul (v3.6a-win32.2)
 
-### What Changed
+Replaced TCP auth token file system with named pipe discovery. Server creates
+`\\.\pipe\tmux-<user>-<label>` with kernel-enforced DACL. Clients receive
+ephemeral nonce + TCP port via pipe, authenticate over TCP. Eliminated `.auth`
+and `.port` files, exponential backoff retry, and 7 security audit findings.
+Cold start improved from 2.3s → ~250ms.
 
-| File | Changes |
-|------|---------|
-| `win32-ipc.c` | Major rewrite: +379/-352 lines. Deleted auth token/port file system, added pipe discovery + nonce auth |
-| `client.c` | Removed exponential backoff retry loop, replaced with simple post-launch retry |
-| `server.c` | Updated cleanup comment (pipe close instead of file delete) |
-| `win32-platform.h` | Removed `win32_ipc_create_auth_token` declaration |
+### Regression Test Expansion (v3.6a-win32.3)
 
-### What Was Eliminated
+Expanded from 2 test scripts (18 assertions) to 8 scripts (230+ assertions):
+`win32-basic.sh`, `win32-claude-swarm.sh`, `win32-format-strings.sh`,
+`win32-conf-syntax.sh`, `win32-keys.sh`, `win32-has-session.sh`,
+`win32-layout.sh`, `win32-control-client.sh`.
 
-- `.auth` and `.port` files in `%LOCALAPPDATA%\tmux\`
-- `create_user_only_file()`, `write_user_only_file()`, `timingsafe_strcmp()`
-- `label_to_port()`, `get_port_file_path()`, `get_auth_token_path()`
-- `win32_ipc_create_auth_token()`, `read_auth_token()`
-- Non-blocking connect + select() timeout logic
-- Exponential backoff retry loop
+### Server Exit Fix
 
-### Cold Start Performance
+Windows `-D` mode set `CLIENT_NOFORK` which disabled `exit-empty`. Fixed with
+`#ifndef _WIN32` guard in `server.c`. Server now auto-exits when all sessions
+are destroyed.
 
-Also resolved the 2.3s restart stall from v3.6a-win32. The stall was caused by
-TCP TIME_WAIT on the stale port file. Named pipes eliminate port files entirely —
-`WaitNamedPipe` replaces the retry loop and connects as soon as the server's pipe
-is ready. Restart time: ~250ms.
+### Control Mode
 
-### Remaining Optimization Opportunities
-
-- [ ] **Reduce TTY channel overhead** — the second pipe handshake + TCP connection for
-  TTY I/O (`win32_ipc_connect_tty`) adds ~50-100ms during interactive attach. Could
-  potentially be pipelined with the identify handshake.
-
----
-
-## Regression Test Expansion (2026-02-23)
-
-CI currently runs only 2 win32 tests (18 assertions total). The upstream `tmux/tmux`
-repo has 33 test scripts with hundreds of assertions that are NOT run on Windows.
-Reviewing upstream commits from Dec 2024 – Feb 2025 shows 15 bug fixes (4 crash
-fixes, 4 key-handling fixes, 3 parser fixes) — none of which our test suite would
-catch. Goal: port the highest-value upstream tests and add Windows-specific coverage.
-
-### 1. Port `format-strings.sh` (171 assertions) — DONE
-
-- [x] Port upstream `format-strings.sh` to Windows
-- 171 assertions pass (4 `#()` command substitution tests skipped — runs via cmd.exe)
-- Adaptation: `tr -d '\r'` in `test_format()`, `-fNUL`, skip `#()` tests
-- File: `regress/win32-format-strings.sh`
-
-### 2. Port `conf-syntax.sh` (21 config files) — DONE
-
-- [x] Port upstream `conf-syntax.sh` to Windows
-- Validates all 21 `regress/conf/*.conf` files parse without error
-- Uses `-f "$i"` at session creation (upstream `source -n` hangs on Windows)
-- Bug found & fixed: `file.c:file_get_path()` and `cmd-source-file.c` didn't
-  recognize MSYS2-escaped drive paths (`C\:/foo`) as absolute
-- File: `regress/win32-conf-syntax.sh`
-
-### 3. Write `win32-keys.sh` (12 key tests) — DONE
-
-- [x] Write Windows-specific key handling test
-- 12 tests: Enter, literals, Space, Tab, Escape, Ctrl-C interrupt, arrow keys
-  in copy mode, Home/End, PgUp/PgDn, F-keys, Backspace, modifier combos
-- Tests key EFFECTS not raw codes (`cat -tv`/`stty` unavailable on ConPTY)
-- File: `regress/win32-keys.sh`
-
-### 4. Port `has-session-return.sh` (exit code validation) — DONE
-
-- [x] Port upstream `has-session-return.sh` to Windows
-- Tests: no server → fail, server + no session → fail, named session → success
-- File: `regress/win32-has-session.sh`
-
-### 5. Write layout verification test (7 tests) — DONE
-
-- [x] Write test that verifies pane dimensions after split operations
-- 7 tests: single pane dims, h-split, v-split, 4-pane, tiled, even-horizontal,
-  even-vertical — verifies widths/heights sum correctly and are evenly distributed
-- Note: detached sessions on Windows use full height (no status line subtracted)
-- File: `regress/win32-layout.sh`
-
-### 6. Port `control-client-sanity.sh` (6 pane operation tests) — DONE
-
-- [x] Port upstream control-client operations to Windows
-- Control mode (`-C`) not supported on Windows (libevent signal init fails)
-- Tests equivalent pane operations via normal commands: splitw, selectp, killp,
-  swapp, selectl tiled, killw, verify server survives
-- Bug found & fixed: `TMP` variable shadowed Windows `%TMP%`, causing
-  `GetTempFileName()` ACCESS_DENIED — renamed to `OUT`
-- File: `regress/win32-control-client.sh`
-
-### CI Integration — DONE
-
-- [x] Add all 6 tests to `.github/workflows/ci.yml`
-- Each test step runs `taskkill //F //IM tmux.exe` cleanup before execution
-- Key handling test has `timeout-minutes: 5` (many sleep waits)
-
----
-
-## Security Audit (2026-02-22)
-
-Full security review of the Windows IPC/auth layer. 13 findings across 4 severity levels.
-
-**Update (2026-02-23):** The named pipe IPC overhaul (v3.6a-win32.2) resolved 7 of
-13 findings by eliminating the auth token file system entirely. Findings #1-6, #8,
-#12, #13 are no longer applicable — there are no auth files, no port files, no
-secret comparison, and no predictable TCP port discovery.
-
-### Critical
-
-| # | Finding | Status |
-|---|---------|--------|
-| 1 | Auth token file has no Windows ACL | ~~Fixed~~ → Eliminated (no auth files) |
-| 2 | Port file also unprotected | ~~Fixed~~ → Eliminated (no port files) |
-| 3 | `getpeereid()` stub returns uid=0 always | Deferred (structural) |
-
-### High
-
-| # | Finding | Status |
-|---|---------|--------|
-| 4 | Non-constant-time auth comparison | ~~Fixed~~ → Eliminated (no secret comparison, nonces are ephemeral) |
-| 5 | Race: server listens before auth token exists | ~~Fixed~~ → Eliminated (pipe created before TCP listen) |
-| 6 | TCP loopback not user-isolated; port predictable | Resolved (pipe ACL enforces user isolation, port only disclosed via pipe) |
-| 7 | Socketpair TOCTOU race allows hijacking signal/PTY pipes | Deferred |
-
-### Medium
-
-| # | Finding | Status |
-|---|---------|--------|
-| 8 | Auth token not scrubbed from memory | Eliminated (no persistent auth tokens) |
-| 9 | Unbounded pending TTY queue — DoS vector | Deferred |
-| 10 | Potential command injection in label embedding | Deferred |
-| 11 | ConPTY bridge sockets inherit socketpair race | Deferred |
-
-### Low
-
-| # | Finding | Status |
-|---|---------|--------|
-| 12 | Blocking auth read can stall single-threaded server | Eliminated (nonce lookup is in-memory) |
-| 13 | No token rotation mechanism | Eliminated (nonces are single-use, expire in 30s) |
-
-### Remaining Open Issues
-
-- **#3** `getpeereid()` stub — structural, affects Unix compat layer
-- **#7** Socketpair TOCTOU — signal/PTY pipe creation race in `win32-compat.c`
-- **#9** Unbounded pending TTY queue — nonce list is now capped at 16 entries, but
-  TTY queue in `server.c` is still unbounded
-- **#10** Label command injection — `win32-process.c` label embedding
-- **#11** ConPTY bridge socketpair race — inherits #7
+`tmux -CC` is not supported on Windows — libevent `evsig_init_` socketpair
+fails. Documented as a known limitation.

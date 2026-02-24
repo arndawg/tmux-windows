@@ -33,10 +33,12 @@ rendering and dynamic resize works correctly.
 
 ### Key Design Decisions
 
-1. **IPC: TCP loopback instead of Unix domain sockets.**
-   Windows lacks `AF_UNIX` support in older builds. The port uses localhost TCP
-   connections with deterministic port derivation from the session label and
-   cryptographic auth tokens stored in `%LOCALAPPDATA%\tmux\`.
+1. **IPC: Named pipe discovery + TCP data path.**
+   Windows lacks `AF_UNIX` support in older builds. The server creates a named
+   pipe `\\.\pipe\tmux-<user>-<label>` with a kernel-enforced DACL restricting
+   access to the current user. Clients connect to the pipe, receive an ephemeral
+   nonce and TCP port, then authenticate over TCP with the nonce. The data path
+   stays on TCP for libevent `select()` compatibility.
 
 2. **PTY: ConPTY (Windows Pseudo Console) instead of /dev/pty.**
    Child processes are spawned with `CreatePseudoConsole()`. Two bridge threads
@@ -68,9 +70,9 @@ rendering and dynamic resize works correctly.
 7. **TTY channel separation for attach.**
    On Unix, the client's terminal fd is passed to the server via `SCM_RIGHTS`.
    On Windows, `c->fd` is a TCP socket — it cannot carry terminal semantics.
-   Instead, the client opens a second TCP connection authenticated with a
-   one-time tty token (`MSG_IDENTIFY_TTYTOKEN`). The server correlates this
-   connection to the client and uses it exclusively for escape sequence I/O,
+   Instead, the client performs a second pipe handshake to obtain a nonce and
+   TCP port for the TTY channel (`MSG_IDENTIFY_TTYTOKEN`). The server correlates
+   this connection to the client and uses it exclusively for escape sequence I/O,
    with `send()` instead of `write()` to avoid CRT invalid parameter aborts
    on Winsock sockets.
 
@@ -104,7 +106,7 @@ cross-platform differences are handled automatically:
 |------|------:|---------|
 | `win32-platform.h` | 1,081 | POSIX type mappings, constants, signal stubs, struct termios/winsize, function declarations |
 | `win32-compat.c` | 730 | POSIX shims: flock, clock_gettime, socketpair, waitpid, kill, wcwidth, fnmatch, tparm, etc. |
-| `win32-ipc.c` | 462 | TCP-based IPC replacing Unix domain sockets, with auth token management and tty channel support |
+| `win32-ipc.c` | 462 | Named pipe discovery + nonce auth replacing Unix domain sockets, with TCP data path and tty channel support |
 | `win32-regex.c` | 429 | Simple POSIX ERE regex engine (character classes, quantifiers, anchors, alternation) |
 | `win32-regex.h` | 51 | POSIX regex interface header |
 | `win32-pty.c` | 286 | ConPTY wrapper: pseudo-console creation, process spawn, bidirectional bridge threads |
@@ -126,7 +128,7 @@ cross-platform differences are handled automatically:
 | `proc.c` | Signal pipe integration; `proc_fork_and_daemon()` via CreateProcess; closesocket |
 | `client.c` | TCP IPC connection with poll-retry; `win32_launch_server()` fallback; tty channel with token auth; client-driven resize via `MSG_RESIZE` |
 | `input.c` | Conditional includes; input handling adjustments |
-| `server.c` | `win32_ipc_create_server()`; label-based identification; auth token verification; tty channel correlation |
+| `server.c` | `win32_ipc_create_server()`; label-based identification; nonce verification; tty channel correlation |
 | `server-client.c` | IPC client handling; `MSG_RESIZE` with `msg_resize_data` payload; `MSG_IDENTIFY_TTYTOKEN` |
 | `tty.c` | `send()` instead of `write()` for tty_raw on Winsock sockets; `CLIENT_DEAD` guard; `tty_resize()` no-op on Windows |
 | `server-fn.c` | ConPTY cleanup via `win32_pty_close()` in `server_destroy_pane()` |
@@ -146,14 +148,15 @@ The remaining ~45 files have 2-12 line changes each, primarily:
 
 ## Regression Tests
 
-Windows-specific tests are in `regress/`. Run with:
+CI runs 8 test scripts (230+ assertions). Windows-specific tests are in
+`regress/`. Run with:
 
 ```bash
 TEST_TMUX=./build/Debug/tmux.exe bash regress/win32-basic.sh
 TEST_TMUX=./build/Debug/tmux.exe bash regress/win32-claude-swarm.sh
 ```
 
-### win32-basic.sh
+### win32-basic.sh (8 tests)
 
 1. Session lifecycle (new, ls, kill-session)
 2. Send-keys + capture-pane (ConPTY I/O)
@@ -164,7 +167,7 @@ TEST_TMUX=./build/Debug/tmux.exe bash regress/win32-claude-swarm.sh
 7. `-S` with Unix-style path (basename extraction + warning)
 8. `default-shell` fallback from Unix path to `cmd.exe`
 
-### win32-claude-swarm.sh
+### win32-claude-swarm.sh (10 tests × 3 cycles)
 
 Simulates the exact tmux command sequences used by Claude Code agent teams
 (split-pane mode). Tests run across 3 full cycles:
@@ -179,6 +182,38 @@ Simulates the exact tmux command sequences used by Claude Code agent teams
 8. Rapid session teardown (`kill-session`)
 9. Multi-session management
 10. Rapid create-destroy cycles (5 iterations)
+
+### win32-format-strings.sh (171 assertions)
+
+Port of upstream `format-strings.sh`. Tests `#{...}` format engine including
+conditionals, string operations, and math. 4 `#()` command substitution tests
+skipped (runs via cmd.exe on Windows).
+
+### win32-conf-syntax.sh (21 config files)
+
+Port of upstream `conf-syntax.sh`. Validates all 21 `regress/conf/*.conf`
+files parse without error.
+
+### win32-keys.sh (12 tests)
+
+Windows-specific key handling: Enter, literals, Space, Tab, Escape, Ctrl-C,
+arrow keys in copy mode, Home/End, PgUp/PgDn, F-keys, Backspace, modifier
+combos. Tests key effects, not raw codes.
+
+### win32-has-session.sh (3 tests)
+
+Port of upstream `has-session-return.sh`. Exit code validation: no server →
+fail, server + no session → fail, named session → success.
+
+### win32-layout.sh (7 tests)
+
+Pane dimension verification after split operations: single pane, h-split,
+v-split, 4-pane, tiled, even-horizontal, even-vertical.
+
+### win32-control-client.sh (6 tests)
+
+Port of upstream control-client pane operations: splitw, selectp, killp,
+swapp, selectl tiled, killw — verifies server survives each operation.
 
 Note: The tests use `OUT` instead of `TMP` for temp file variables to avoid
 shadowing the Windows `%TMP%` environment variable (which would cause
@@ -255,33 +290,29 @@ Each line has microsecond-precision timestamps (`epoch.usec`) for profiling:
 
 ## Security
 
-The Windows port uses TCP loopback for IPC instead of Unix domain sockets.
-The following hardening measures are in place:
+The Windows port uses named pipes for server discovery and TCP for the data
+path. The following hardening measures are in place:
 
-- **Auth tokens**: Each server generates a 256-bit random token via
-  `RtlGenRandom`, stored in `%LOCALAPPDATA%\tmux\<label>.auth`. Clients
-  must present the token on connect.
-- **File ACLs**: Auth token and port files are created with a DACL restricting
-  access to the current user's SID only (no admin/SYSTEM/other user access).
-- **Constant-time comparison**: Auth token verification uses a timing-safe
-  XOR-accumulator comparison to prevent side-channel attacks.
-- **Auth-before-listen**: The auth token file is created before the server
-  begins accepting connections, closing the race window.
+- **Kernel-enforced DACL**: The server's named pipe
+  (`\\.\pipe\tmux-<user>-<label>`) is created with a DACL restricting access
+  to the current user's SID only. Other users and SYSTEM cannot connect.
+- **Ephemeral nonces**: When a client connects to the pipe, the server
+  generates a one-time nonce via `RtlGenRandom` and sends it along with the
+  TCP port. The nonce expires after 30 seconds and is single-use.
+- **No persistent secrets**: There are no auth files, port files, or tokens
+  stored on disk. All authentication state is in-memory and ephemeral.
+- **Pipe-before-listen**: The named pipe is created before the TCP listener
+  starts, ensuring the port is never disclosed without DACL protection.
 
-IPC files are stored in `%LOCALAPPDATA%\tmux\`:
-- `<label>.port` — TCP port number
-- `<label>.auth` — 64-character hex auth token
-
-The server cleans up these files on exit. If stale files remain (e.g., after
-a force-kill), the next client automatically cleans them up before launching
-a new server.
+No IPC files are written to disk. The named pipe is automatically cleaned up
+when the server exits or the pipe handle is closed.
 
 ## Known Limitations
 
-- No Unix domain socket support; IPC uses TCP loopback with auth tokens
+- No Unix domain socket support; IPC uses named pipe discovery + TCP data path
 - No file descriptor passing between processes; tty channel model used instead
 - Regex engine is simplified (covers tmux's pattern matching needs)
 - `SIGCHLD` is emulated via process watcher thread; timing may differ from Unix
 - Some terminal features may behave differently under ConPTY vs. native Unix PTYs
-- `TMUX_TMPDIR` environment variable is not used; IPC files are always in `%LOCALAPPDATA%\tmux\`
+- Control mode (`-C`) not supported — libevent `evsig_init_` socketpair fails
 - tmux output uses `\r\n` line endings; scripts should strip `\r` when comparing output

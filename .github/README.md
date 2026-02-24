@@ -4,18 +4,22 @@ tmux is a terminal multiplexer: it enables a number of terminals to be created,
 accessed, and controlled from a single screen. tmux may be detached from a
 screen and continue running in the background, then later reattached.
 
-This release runs on OpenBSD, FreeBSD, NetBSD, Linux, macOS and Solaris.
+This release runs on OpenBSD, FreeBSD, NetBSD, Linux, macOS, Solaris and
+Windows.
 
 ## Dependencies
 
 tmux depends on [libevent](https://libevent.org) 2.x, available from [this
 page](https://github.com/libevent/libevent/releases/latest).
 
-It also depends on [ncurses](https://www.gnu.org/software/ncurses/), available
-from [this page](https://invisible-mirror.net/archives/ncurses/).
+On Unix platforms, it also depends on
+[ncurses](https://www.gnu.org/software/ncurses/), available from [this
+page](https://invisible-mirror.net/archives/ncurses/). The Windows port
+includes a built-in terminal capability table and does not require ncurses.
 
-To build tmux, a C compiler (for example gcc or clang), make, pkg-config and a
-suitable yacc (yacc or bison) are needed.
+To build tmux on Unix, a C compiler (for example gcc or clang), make,
+pkg-config and a suitable yacc (yacc or bison) are needed. On Windows, MSVC
+and CMake are used instead (see [Windows](#windows) below).
 
 ## Installation
 
@@ -51,6 +55,20 @@ cd tmux
 sh autogen.sh
 ./configure && make
 ~~~
+
+### Windows
+
+The Windows port builds with MSVC and CMake. Install via winget:
+
+~~~powershell
+winget install arndawg.tmux-windows
+~~~
+
+Or download pre-built binaries from
+[GitHub Releases](https://github.com/arndawg/tmux-windows/releases).
+
+For build instructions and Windows-specific documentation, see
+[README_WIN32.MD](../README_WIN32.MD).
 
 ## Contributing
 

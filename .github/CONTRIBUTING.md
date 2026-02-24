@@ -78,6 +78,30 @@ The log files are:
 
 Please attach the log files to your issue.
 
+## Windows-specific issues
+
+If you are reporting a Windows-specific issue:
+
+- Include the output of `tmux -V` and your Windows version (`winver`).
+
+- Use `-fNUL` instead of `-f/dev/null` when testing without a config:
+
+~~~bash
+tmux -Ltest kill-server
+tmux -vv -Ltest -fNUL new
+~~~
+
+- Check if the issue reproduces with the Windows regression tests:
+
+~~~bash
+TEST_TMUX=./build/Debug/tmux.exe bash regress/win32-basic.sh
+~~~
+
+  The full test suite is in `regress/win32-*.sh` (8 scripts, 230+ assertions).
+
+- For IPC or connectivity issues, include the server log
+  (`tmux-server-*.log`) — it shows pipe creation, nonce auth, and TCP setup.
+
 ## What does it mean if an issue is closed?
 
 All it means is that work on the issue is not planned for the near future. See
