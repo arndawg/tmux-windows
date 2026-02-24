@@ -623,6 +623,17 @@ tty_term_create(struct tty *tty, char *name, char **caps, u_int ncaps,
 			tty_add_features(feat, "256", ",");
 	}
 
+#ifdef _WIN32
+	/*
+	 * Windows Terminal and modern conhost always support 256 and RGB
+	 * colours via VT sequences. DA probe responses may not arrive in
+	 * time (the tty relay starts after the queries are sent), and
+	 * COLORTERM is not always set in the client environment, so
+	 * unconditionally enable these features.
+	 */
+	tty_add_features(feat, "256,RGB", ",");
+#endif
+
 	/* Apply overrides so any capabilities used for features are changed. */
 	tty_term_apply_overrides(term);
 

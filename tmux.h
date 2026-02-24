@@ -93,7 +93,11 @@ struct winlink;
 #define TMUX_SOCK_PERM (7 /* o+rwx */)
 #endif
 #ifndef TMUX_TERM
+#ifdef _WIN32
+#define TMUX_TERM "xterm-256color"
+#else
 #define TMUX_TERM "screen"
+#endif
 #endif
 #ifndef TMUX_LOCK_CMD
 #define TMUX_LOCK_CMD "lock -np"
