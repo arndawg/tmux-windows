@@ -47,7 +47,7 @@ test_*.c
 child_console_info.txt
 conpty_results.txt
 defines_output.txt
-tmux-out-*.log
+tmux-*.log
 client-new.log
 build_*.bat
 

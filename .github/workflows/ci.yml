@@ -11,7 +11,7 @@ jobs:
   build-and-test:
     runs-on: windows-latest
     env:
-      VCPKG_DEFAULT_TRIPLET: x64-windows
+      VCPKG_DEFAULT_TRIPLET: x64-windows-static
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
 
     steps:
@@ -25,19 +25,20 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
-          key: vcpkg-x64-windows-${{ hashFiles('CMakeLists.txt') }}
-          restore-keys: vcpkg-x64-windows-
+          key: vcpkg-x64-windows-static-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: vcpkg-x64-windows-static-
 
       - name: Setup vcpkg and install dependencies
         shell: pwsh
         run: |
-          vcpkg install libevent:x64-windows
+          vcpkg install libevent:x64-windows-static
 
       - name: Configure CMake
         shell: pwsh
         run: |
           cmake -S . -B build -G "Visual Studio 17 2022" `
-            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static
 
       - name: Build Debug
         shell: pwsh
@@ -109,7 +110,6 @@ jobs:
           name: tmux-windows-debug
           path: |
             build/Debug/tmux.exe
-            build/Debug/*.dll
 
   release:
     needs: build-and-test
@@ -118,7 +118,7 @@ jobs:
     permissions:
       contents: write
     env:
-      VCPKG_DEFAULT_TRIPLET: x64-windows
+      VCPKG_DEFAULT_TRIPLET: x64-windows-static
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
 
     steps:
@@ -132,19 +132,20 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
-          key: vcpkg-x64-windows-${{ hashFiles('CMakeLists.txt') }}
-          restore-keys: vcpkg-x64-windows-
+          key: vcpkg-x64-windows-static-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: vcpkg-x64-windows-static-
 
       - name: Setup vcpkg and install dependencies
         shell: pwsh
         run: |
-          vcpkg install libevent:x64-windows
+          vcpkg install libevent:x64-windows-static
 
       - name: Configure CMake
         shell: pwsh
         run: |
           cmake -S . -B build -G "Visual Studio 17 2022" `
-            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static
 
       - name: Build Release
         shell: pwsh
@@ -160,23 +161,6 @@ jobs:
 
           New-Item -ItemType Directory -Path $stagingDir
           Copy-Item build/Release/tmux.exe $stagingDir/
-          Copy-Item build/Release/*.dll $stagingDir/ -ErrorAction SilentlyContinue
-
-          # Create install instructions
-          @"
-          tmux-windows $version
-
-          Installation:
-            1. Extract this zip to a folder (e.g., C:\tools\tmux)
-            2. Add that folder to your PATH
-            3. Run: tmux new-session
-
-          Requirements:
-            - Windows 10 version 1809+ (for ConPTY support)
-            - Windows Terminal or a VT-capable console host
-
-          More info: https://github.com/arndawg/tmux-windows
-          "@ | Out-File -Encoding UTF8 $stagingDir/README.txt
 
           Compress-Archive -Path "$stagingDir/*" -DestinationPath $zipName
 
@@ -208,8 +192,7 @@ jobs:
             - Windows Terminal or VT-capable console
 
             ### What's included
-            - `tmux.exe` (Release build)
-            - libevent runtime DLL
+            - `tmux.exe` (statically linked, single-file)
 
             See [README_WIN32.MD](https://github.com/arndawg/tmux-windows/blob/master/README_WIN32.MD) for full documentation.
           generate_release_notes: true

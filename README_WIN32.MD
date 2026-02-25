@@ -231,7 +231,7 @@ winget install arndawg.tmux-windows
 
 1. Download the latest `tmux-windows-*.zip` from
    [GitHub Releases](https://github.com/arndawg/tmux-windows/releases)
-2. Extract `tmux.exe` and `event_core.dll` to a folder in your `%PATH%`
+2. Extract `tmux.exe` to a folder in your `%PATH%`
 3. Run `tmux new-session`
 
 ### Upgrading
@@ -248,15 +248,16 @@ The project uses CMake with MSVC. Requires [vcpkg](https://vcpkg.io/) for
 libevent:
 
 ```powershell
-vcpkg install libevent:x64-windows
+vcpkg install libevent:x64-windows-static
 cmake -S . -B build -G "Visual Studio 17 2022" `
-  -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+  -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
+  -DVCPKG_TARGET_TRIPLET=x64-windows-static
 cmake --build build --config Release
 ```
 
-The resulting `tmux.exe` is in `build/Release/`. For debug builds, use
-`--config Debug` (output in `build/Debug/`). Copy `tmux.exe` and
-`event_core.dll` to a directory in `%PATH%`.
+The resulting `tmux.exe` is a single statically-linked binary in
+`build/Release/`. For debug builds, use `--config Debug` (output in
+`build/Debug/`). Copy `tmux.exe` to a directory in `%PATH%`.
 
 CI builds run automatically on every push via GitHub Actions
 (`.github/workflows/ci.yml`). Tagged releases (`v*`) produce downloadable
@@ -286,7 +287,7 @@ Each line has microsecond-precision timestamps (`epoch.usec`) for profiling:
 
 - Windows 10 version 1809+ (for ConPTY support)
 - Windows Terminal or a VT-capable console host
-- `event_core.dll` (libevent, included in release zip)
+- No additional DLLs required (libevent is statically linked)
 
 ## Security
 
