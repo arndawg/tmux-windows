@@ -95,10 +95,10 @@ Package: `arndawg.tmux-windows` in `microsoft/winget-pkgs`.
 
 Copy from the previous version directory in `manifests/a/arndawg/tmux-windows/` — update `PackageVersion`, `InstallerUrl`, `InstallerSha256`, `ReleaseDate`, `ReleaseNotes`, and `ReleaseNotesUrl`.
 
-## Architecture Notes
+### Manifest formatting
 
-- IPC uses named pipes for discovery + TCP for data (libevent needs sockets)
-- Pipe name: `\\.\pipe\tmux-<user>-<label>`
-- ConPTY panes run `cmd.exe`, not a Unix shell
-- Control mode (`-C`) not supported — libevent `evsig_init_` socketpair fails
+Do **not** add a trailing blank line to manifest YAML files. Earlier versions (3.6a-win32.1/3/4) had one, but from v3.6a-win32.6 onward we omit it.
+
+## Known Quirks
+
 - `source -n` hangs as a separate client on Windows (file-read protocol blocks)
