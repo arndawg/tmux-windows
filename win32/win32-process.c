@@ -240,10 +240,23 @@ win32_launch_server(const char *label)
 	si.cb = sizeof si;
 	memset(&pi, 0, sizeof pi);
 
+	/*
+	 * CREATE_BREAKAWAY_FROM_JOB detaches the server from any job object
+	 * the parent belongs to (e.g., sshd's session job). Without this,
+	 * closing an SSH connection kills the tmux server along with all
+	 * processes in the job. Fall back without the flag if the job
+	 * doesn't allow breakaway (ERROR_ACCESS_DENIED).
+	 */
 	if (!CreateProcessA(NULL, cmdline, NULL, NULL, FALSE,
-	    DETACHED_PROCESS | CREATE_NO_WINDOW, NULL, NULL,
-	    &si, &pi))
-		return;
+	    DETACHED_PROCESS | CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB,
+	    NULL, NULL, &si, &pi)) {
+		if (GetLastError() != ERROR_ACCESS_DENIED)
+			return;
+		if (!CreateProcessA(NULL, cmdline, NULL, NULL, FALSE,
+		    DETACHED_PROCESS | CREATE_NO_WINDOW, NULL, NULL,
+		    &si, &pi))
+			return;
+	}
 
 	CloseHandle(pi.hThread);
 	CloseHandle(pi.hProcess);

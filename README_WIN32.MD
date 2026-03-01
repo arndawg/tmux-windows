@@ -27,7 +27,9 @@ tmux kill-session -t test
 
 Both manual server start (`tmux -D`) and automatic server launch (client spawns
 a detached server process) are supported. Terminal attach with full-window
-rendering and dynamic resize works correctly.
+rendering and dynamic resize works correctly. The server survives SSH
+disconnects (via job object breakaway), so sessions started over SSH persist
+and can be reattached from the local console or a new SSH connection.
 
 ## Architecture
 
@@ -110,7 +112,7 @@ cross-platform differences are handled automatically:
 | `win32-regex.c` | 429 | Simple POSIX ERE regex engine (character classes, quantifiers, anchors, alternation) |
 | `win32-regex.h` | 51 | POSIX regex interface header |
 | `win32-pty.c` | 286 | ConPTY wrapper: pseudo-console creation, process spawn, bidirectional bridge threads |
-| `win32-process.c` | 271 | Process watcher thread, `win32_launch_server()`, child spawn helpers |
+| `win32-process.c` | 284 | Process watcher thread, `win32_launch_server()` (with job object breakaway for SSH survival), child spawn helpers |
 | `win32-terminfo.c` | 213 | Hardcoded xterm-256color terminal capability table (170+ entries) |
 | `win32-signal.c` | 157 | Signal emulation via console events, resize polling, self-pipe delivery |
 | `win32-tty.c` | 98 | Console mode management: raw VT mode, size queries, UTF-8 code page |
